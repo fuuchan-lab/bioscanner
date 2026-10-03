@@ -121,11 +121,15 @@ body{
 .icon-btn[hidden]{display:none}
 
 /* ── スコープ(カメラ) ───────────────────────── */
+/* カメラ表示。映像は object-fit:contain で中央に置き、解析している範囲が
+   そのまま見えるようにする(切り取ると重畳の位置が合わなくなる)。 */
 .scope{
   position:relative;
   background:#05090A;
   overflow:hidden;
   min-height:0;
+  display:grid;
+  place-items:center;
 }
 #video{
   position:absolute; inset:0;
@@ -198,12 +202,19 @@ body{
 .start:active{transform:translateY(1px)}
 
 /* ── 計器デッキ ───────────────────────────────── */
+/* カメラ表示を画面の主役に保つため、デッキの高さは画面の半分までに
+   抑えて中であふれさせる。抑えないと設定や説明を開いたときに
+   カメラが上へ押し上げられて小さくなってしまう。 */
 .deck{
   background:var(--panel);
   border-top:1px solid var(--line);
   padding:var(--s3) var(--s4) calc(var(--s3) + env(safe-area-inset-bottom,0px));
   display:grid;
   gap:var(--s3);
+  align-content:start;
+  max-height:50dvh;
+  overflow-y:auto;
+  overscroll-behavior:contain;
 }
 
 .readout{
@@ -550,6 +561,46 @@ body{
       </div>
     </div>
 
+    <div class="size">
+      <div class="s-head">
+        <span class="lab">SIZE / 大きさ</span>
+        <button type="button" class="s-cfg" id="btnSizeCfg" aria-expanded="false" aria-controls="sizePanel">距離の設定</button>
+      </div>
+      <div class="s-main">
+        <span class="s-val" id="sVal">—</span>
+        <span class="s-sub" id="sSub">対象を検出すると表示します</span>
+      </div>
+
+      <div class="s-panel" id="sizePanel" hidden>
+        <div class="field">
+          <div class="f-top"><span>距離の求め方</span></div>
+          <div class="seg" id="segDist" role="group" aria-label="距離の求め方">
+            <button type="button" data-v="manual" aria-pressed="true">手動で入力</button>
+            <button type="button" data-v="tilt" aria-pressed="false">傾きから</button>
+          </div>
+        </div>
+
+        <div class="field" id="fDist">
+          <div class="f-top"><span>対象までの距離</span><span class="f-num" id="nDist">5.0 m</span></div>
+          <input type="range" id="rDist" min="0.5" max="30" step="0.1" value="5" aria-label="対象までの距離">
+        </div>
+
+        <div class="field" id="fHeight" hidden>
+          <div class="f-top"><span>カメラの高さ(地面から)</span><span class="f-num" id="nHeight">1.40 m</span></div>
+          <input type="range" id="rHeight" min="0.2" max="2.5" step="0.05" value="1.4" aria-label="カメラの高さ">
+        </div>
+
+        <button type="button" class="s-cfg" id="btnTilt" hidden>傾きセンサーを有効にする</button>
+
+        <div class="field">
+          <div class="f-top"><span>カメラの水平画角</span><span class="f-num" id="nFov">68°</span></div>
+          <input type="range" id="rFov" min="45" max="90" step="1" value="68" aria-label="カメラの水平画角">
+        </div>
+
+        <p class="f-note" id="distNote">カメラ1台では距離が分からないため、物理的な大きさは距離を与えて初めて決まります。角寸法(視野に占める角度)だけは仮定なしの実測値です。</p>
+      </div>
+    </div>
+
     <div class="trace">
       <canvas id="spark"></canvas>
       <span class="t-lab">直近60秒</span>
@@ -660,6 +711,14 @@ let sens = 1;
 const THR = [0.52, 0.40, 0.30];          // 低 / 中 / 高 感度のしきい値
 
 let verdictEma = 0, peak = 0;
+
+/* 大きさ推定の設定と結果 */
+let fovH = 68;                           // カメラの水平画角(度)
+let distMode = "manual";                 // "manual" | "tilt"
+let distManual = 5;                      // m
+let camHeight = 1.4;                     // m
+let tiltOn = false, tiltPhi = 0, tiltRoll = 0, tiltPortrait = true;
+let szOk = false, szW = 0, szH = 0, szD = 0, szAW = 0, szAH = 0, szCell = 0;
 let mMotion = 0, mRhythm = 0, mWarm = 0, topBpm = 0, topBand = "";
 let blobs = [];
 
@@ -925,6 +984,41 @@ function analyze() {
   else if (shiftEma > 0.22) filled = Math.max(0, filled - 4);   /* 軽いぶれは少し巻き戻すだけ */
 }
 
+/* ══ 大きさの幾何 ════════════════════════════════
+   ピンホールモデル。画面の幅いっぱいが水平画角 fov を張るとき、画面幅に
+   対する割合 f の位置は、光軸から atan((2f-1)·tan(fov/2)) の角度にある。
+   いずれも純粋関数なので単体で検証できる。 */
+
+/* 画面の f0..f1 の範囲が張る角度(ラジアン) */
+function spanAngle(f0, f1, tanHalf) {
+  return Math.atan((2 * f1 - 1) * tanHalf) - Math.atan((2 * f0 - 1) * tanHalf);
+}
+
+/* 距離 d にある、光軸に垂直な面での実長(m)。
+   tan の差がそのまま長さの比になるので割合の差に比例する。 */
+function spanLength(f0, f1, tanHalf, d) {
+  return d * 2 * tanHalf * (f1 - f0);
+}
+
+/* 端末の傾きから、背面カメラの光軸が水平から何ラジアン下を向いているか。
+   端末座標の -z 軸(背面カメラの向き)の世界座標での鉛直成分が
+   -cos(beta)cos(gamma) になることから導かれる。縦持ち・横持ちに依らない。 */
+function cameraDepression(betaDeg, gammaDeg) {
+  const b = betaDeg * Math.PI / 180, g = gammaDeg * Math.PI / 180;
+  let s = Math.cos(b) * Math.cos(g);
+  if (s > 1) s = 1; else if (s < -1) s = -1;
+  return Math.asin(s);
+}
+
+/* 平らな地面に立つ対象までの水平距離。
+   phi = 光軸の伏角、alphaBottom = 光軸から対象の足元までの角度(下が正)。 */
+function groundDistance(h, phi, alphaBottom) {
+  const d = phi + alphaBottom;
+  if (d < 0.05) return 0;                /* 約3度未満は遠すぎて決まらない */
+  const r = h / Math.tan(d);
+  return r > 0 && r < 80 ? r : 0;
+}
+
 /* 解析格子の任意の位置を双線形補間で読む。端は内側にクランプする。 */
 function sampleAt(arr, fx, fy) {
   if (fx < 0) fx = 0; else if (fx > AW - 1.001) fx = AW - 1.001;
@@ -1147,6 +1241,8 @@ function fuse() {
   blobs.sort((a, b) => b.v - a.v);
   blobs = blobs.slice(0, 3);
 
+  estimateSize(blobs.length ? blobs[0] : null);
+
   /* 判定値 = 最有力ブロブの強さ */
   const target = blobs.length ? clamp01((blobs[0].v - 0.18) / 0.62) : 0;
   verdictEma += (target - verdictEma) * 0.18;
@@ -1173,6 +1269,41 @@ function fuse() {
     mRhythm += (0 - mRhythm) * 0.2;
     mWarm   += (0 - mWarm)   * 0.2;
   }
+}
+
+/* 最有力ブロブの大きさを推定する。
+   角寸法は仮定なしの実測。物理サイズは距離を与えて初めて決まる。
+   外接矩形は解析格子(48×36)の刻みなので、幅1セル分を誤差として持たせる。 */
+function estimateSize(b) {
+  szOk = false;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!b || !vw || !vh) return;
+
+  const tanH = Math.tan(fovH / 2 * Math.PI / 180);
+  const tanV = tanH * (vh / vw);         /* 焦点距離は共通なので縦横で割合が決まる */
+
+  const fx0 = b.x0 / AW, fx1 = (b.x1 + 1) / AW;
+  const fy0 = b.y0 / AH, fy1 = (b.y1 + 1) / AH;
+
+  szAW = spanAngle(fx0, fx1, tanH) * 180 / Math.PI;
+  szAH = spanAngle(fy0, fy1, tanV) * 180 / Math.PI;
+
+  let d = 0;
+  if (distMode === "tilt") {
+    if (!tiltOn) return;
+    /* 足元(外接矩形の下辺)の光軸からの角度 */
+    const alphaB = Math.atan((2 * fy1 - 1) * tanV);
+    d = groundDistance(camHeight, tiltPhi, alphaB);
+    if (!d) return;
+  } else {
+    d = distManual;
+  }
+
+  szD = d;
+  szW = spanLength(fx0, fx1, tanH, d);
+  szH = spanLength(fy0, fy1, tanV, d);
+  szCell = spanLength(0, 1 / AW, tanH, d);   /* 1セル分 = 誤差の幅 */
+  szOk = true;
 }
 
 /* ══ 描画 ════════════════════════════════════════ */
@@ -1258,7 +1389,7 @@ function render() {
     octx.stroke();
 
     if (bi === 0) {
-      const t = Math.round(v * 100) + "%";
+      const t = Math.round(v * 100) + "%" + (szOk ? "  " + fmtLen(szW) : "");
       octx.font = "600 " + Math.round(13 * dpr) + "px 'IBM Plex Mono', monospace";
       const tw = octx.measureText(t).width;
       const bh = 19 * dpr, pad = 6 * dpr;
@@ -1339,6 +1470,50 @@ function updateDeck() {
   vSub.textContent = parts.join(" · ");
 
   setMeters(mMotion, mRhythm, mWarm);
+  updateSize(phase);
+}
+
+/* 長さを読みやすい単位で。1m未満は cm。 */
+function fmtLen(m) {
+  if (!isFinite(m) || m <= 0) return "—";
+  return m < 1 ? Math.round(m * 100) + " cm" : m.toFixed(m < 10 ? 2 : 1) + " m";
+}
+/* 誤差を含む範囲。幅1セル分の量子化誤差を両端に振る。 */
+function fmtRange(m, err) {
+  const lo = Math.max(0, m - err / 2), hi = m + err / 2;
+  if (hi < 1) return Math.round(lo * 100) + "–" + Math.round(hi * 100) + " cm";
+  return lo.toFixed(2) + "–" + hi.toFixed(2) + " m";
+}
+
+function updateSize(phase) {
+  const sVal = $("sVal"), sSub = $("sSub");
+  const live = phase === "part" || phase === "full";
+
+  if (!live || !blobs.length) {
+    sVal.classList.remove("on");
+    sVal.textContent = "—";
+    sSub.textContent = live ? "検出された対象はありません" : "対象を検出すると表示します";
+    return;
+  }
+
+  /* 角寸法は距離が分からなくても出せる実測値 */
+  const ang = szAW.toFixed(1) + "° × " + szAH.toFixed(1) + "°";
+
+  if (!szOk) {
+    sVal.classList.remove("on");
+    sVal.textContent = ang;
+    sSub.textContent = distMode === "tilt"
+      ? (tiltOn ? "足元が水平より下に入るよう、やや下に向けてください" : "傾きセンサーが未有効です(設定から有効化)")
+      : "角寸法のみ — 距離を設定すると大きさが出ます";
+    return;
+  }
+
+  sVal.classList.add("on");
+  sVal.textContent = "幅 " + fmtRange(szW, szCell);
+  sSub.textContent =
+    "高さ " + fmtRange(szH, szCell) +
+    " · " + ang +
+    " · 距離 " + fmtLen(szD) + (distMode === "tilt" ? "(傾き)" : "(手動)");
 }
 
 function setMeters(m, r, w) {
@@ -1450,6 +1625,65 @@ $("segSens").addEventListener("click", (e) => {
   for (const el of $("segSens").querySelectorAll("button"))
     el.setAttribute("aria-pressed", String(el === b));
   drawSpark();
+});
+
+/* ── 大きさの設定 ───────────────────────────── */
+$("btnSizeCfg").addEventListener("click", (e) => {
+  const p = $("sizePanel"), open = p.hidden;
+  p.hidden = !open;
+  e.currentTarget.setAttribute("aria-expanded", String(open));
+});
+
+$("segDist").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-v]");
+  if (!b) return;
+  distMode = b.dataset.v;
+  for (const el of $("segDist").querySelectorAll("button"))
+    el.setAttribute("aria-pressed", String(el === b));
+  const tilt = distMode === "tilt";
+  $("fDist").hidden = tilt;
+  $("fHeight").hidden = !tilt;
+  $("btnTilt").hidden = !tilt || tiltOn;
+  $("distNote").textContent = tilt
+    ? "端末の傾きとカメラの高さから、平らな地面に立つ対象までの距離を求めます。地面が平らで、対象が地面に接していることが前提です。端末は縦に構えてください。"
+    : "カメラ1台では距離が分からないため、物理的な大きさは距離を与えて初めて決まります。角寸法(視野に占める角度)だけは仮定なしの実測値です。";
+});
+
+function bindRange(id, numId, fmt, set) {
+  const r = $(id);
+  const upd = () => { const v = Number(r.value); set(v); $(numId).textContent = fmt(v); };
+  r.addEventListener("input", upd);
+  upd();
+}
+bindRange("rDist", "nDist", (v) => v.toFixed(1) + " m", (v) => { distManual = v; });
+bindRange("rHeight", "nHeight", (v) => v.toFixed(2) + " m", (v) => { camHeight = v; });
+bindRange("rFov", "nFov", (v) => Math.round(v) + "°", (v) => { fovH = v; });
+
+function onOrient(e) {
+  if (e.beta == null || e.gamma == null) return;
+  tiltPhi = cameraDepression(e.beta, e.gamma);
+  tiltRoll = Math.abs(e.gamma);
+  const a = (screen.orientation && screen.orientation.angle) || 0;
+  tiltPortrait = a === 0 || a === 180;
+  tiltOn = true;
+}
+
+$("btnTilt").addEventListener("click", async (e) => {
+  const DOE = window.DeviceOrientationEvent;
+  if (!DOE) { $("distNote").textContent = "この端末では傾きセンサーを利用できません。手動入力をお使いください。"; return; }
+  try {
+    if (typeof DOE.requestPermission === "function") {
+      const res = await DOE.requestPermission();
+      if (res !== "granted") {
+        $("distNote").textContent = "傾きセンサーの使用が許可されませんでした。手動入力をお使いください。";
+        return;
+      }
+    }
+    window.addEventListener("deviceorientation", onOrient);
+    e.currentTarget.hidden = true;
+  } catch {
+    $("distNote").textContent = "傾きセンサーを有効にできませんでした。手動入力をお使いください。";
+  }
 });
 
 window.addEventListener("resize", sizeCanvases);
