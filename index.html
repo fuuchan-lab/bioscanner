@@ -1,0 +1,1171 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="スマートフォンのカメラで、かざした範囲の動き・律動・色調から生体反応を探すウェブアプリ。">
+<meta name="theme-color" content="#080D0E">
+<meta name="color-scheme" content="dark">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="生体スキャナー"><title>生体スキャナー BioScanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+
+<style>
+/* ── 計器として単一テーマに固定。カメラのビューファインダ上に重ねる表示なので
+      明色地では熱マップが読めなくなる。全色をトークンから明示的に塗る。 ── */
+:root{
+  --ground:#080D0E;
+  --panel:#101718;
+  --panel-2:#17211F;
+  --line:#253230;
+  --line-2:#33423E;
+  --ink:#EAF0ED;
+  --ink-2:#9AA9A5;
+  --ink-3:#5F6E6A;
+  --amber:#FFB341;
+  --amber-2:#C98A2E;
+  --amber-3:#5E441A;
+  --ember:#FF5B37;
+  --cyan:#45D3C0;
+  --cyan-3:#1C4F4A;
+
+  --f-ui:"Noto Sans JP","Hiragino Sans","Yu Gothic UI",system-ui,sans-serif;
+  --f-lab:"Saira Condensed","Noto Sans JP","Hiragino Sans",system-ui,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--f-ui);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-text-size-adjust:100%;
+  overscroll-behavior:none;
+}
+
+.app{
+  height:100dvh;
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  gap:0;
+  overflow:hidden;
+}
+
+/* ── 状態レール ───────────────────────────────── */
+.rail{
+  display:flex;
+  align-items:center;
+  gap:var(--s3);
+  padding:10px var(--s4);
+  background:var(--panel);
+  border-bottom:1px solid var(--line);
+  min-height:44px;
+}
+.mark{
+  display:flex; align-items:baseline; gap:7px;
+  font-family:var(--f-lab);
+  font-weight:700;
+  letter-spacing:.08em;
+  font-size:15px;
+  white-space:nowrap;
+}
+.mark .jp{font-family:var(--f-ui);font-weight:700;font-size:13px;letter-spacing:.06em}
+.mark .en{color:var(--ink-3);font-size:11px;letter-spacing:.16em}
+
+.rail-spacer{flex:1 1 auto}
+
+.state{
+  display:flex; align-items:center; gap:6px;
+  font-family:var(--f-lab);
+  font-size:12px; letter-spacing:.1em;
+  color:var(--ink-2);
+  white-space:nowrap;
+}
+.dot{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--ink-3);
+  flex:none;
+}
+.state[data-s="live"] .dot{background:var(--cyan);box-shadow:0 0 0 3px var(--cyan-3)}
+.state[data-s="hold"] .dot{background:var(--amber);box-shadow:0 0 0 3px var(--amber-3)}
+.state[data-s="off"]  .dot{background:var(--ink-3)}
+
+.icon-btn{
+  appearance:none;
+  background:var(--panel-2);
+  border:1px solid var(--line-2);
+  color:var(--ink-2);
+  border-radius:7px;
+  width:34px;height:34px;
+  display:grid;place-items:center;
+  font-size:15px;
+  cursor:pointer;
+  flex:none;
+  padding:0;
+}
+.icon-btn:hover{color:var(--ink);border-color:var(--ink-3)}
+.icon-btn[aria-pressed="true"]{color:var(--amber);border-color:var(--amber-3);background:#1B1710}
+.icon-btn[hidden]{display:none}
+
+/* ── スコープ(カメラ) ───────────────────────── */
+.scope{
+  position:relative;
+  background:#05090A;
+  overflow:hidden;
+  min-height:0;
+}
+#video{
+  position:absolute; inset:0;
+  width:100%; height:100%;
+  object-fit:contain;
+  background:#05090A;
+}
+#overlay{
+  position:absolute; inset:0;
+  width:100%; height:100%;
+  pointer-events:none;
+}
+
+/* 取得中の走査線 */
+.sweep{
+  position:absolute; left:0; right:0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+  opacity:.75;
+  animation:sweep 2.4s cubic-bezier(.45,0,.55,1) infinite;
+  pointer-events:none;
+}
+@keyframes sweep{
+  0%{top:0} 50%{top:calc(100% - 2px)} 100%{top:0}
+}
+.sweep[hidden]{display:none}
+
+/* 起動前・エラー時の覆い */
+.veil{
+  position:absolute; inset:0;
+  display:grid; place-content:center;
+  justify-items:center;
+  gap:var(--s4);
+  padding:var(--s5);
+  text-align:center;
+  background:radial-gradient(120% 90% at 50% 40%,#0E1618 0%,#05090A 100%);
+}
+.veil[hidden]{display:none}
+.veil h1{
+  font-family:var(--f-ui);
+  font-weight:700;
+  font-size:20px;
+  letter-spacing:.02em;
+  margin:0;
+  text-wrap:balance;
+}
+.veil p{
+  margin:0;
+  max-width:34ch;
+  color:var(--ink-2);
+  font-size:13px;
+  line-height:1.65;
+  text-wrap:pretty;
+}
+.veil .err{color:var(--ember)}
+
+.start{
+  appearance:none;
+  font-family:var(--f-ui);
+  font-weight:700;
+  font-size:15px;
+  letter-spacing:.04em;
+  color:#120D04;
+  background:var(--amber);
+  border:none;
+  border-radius:10px;
+  padding:13px 26px;
+  cursor:pointer;
+}
+.start:hover{background:#FFC262}
+.start:active{transform:translateY(1px)}
+
+/* ── 計器デッキ ───────────────────────────────── */
+.deck{
+  background:var(--panel);
+  border-top:1px solid var(--line);
+  padding:var(--s3) var(--s4) calc(var(--s3) + env(safe-area-inset-bottom,0px));
+  display:grid;
+  gap:var(--s3);
+}
+
+.readout{
+  display:grid;
+  grid-template-columns:minmax(132px,auto) minmax(0,1fr);
+  gap:var(--s4);
+  align-items:start;
+}
+
+/* 判定(ヒーロー数値) */
+.verdict{display:grid;gap:2px}
+.verdict .lab{
+  font-family:var(--f-lab);
+  font-size:11px; letter-spacing:.16em;
+  color:var(--ink-3);
+}
+.verdict .val{
+  display:flex; align-items:baseline; gap:4px;
+  font-family:var(--f-num);
+  font-weight:600;
+  font-size:46px;
+  line-height:1;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink-3);
+  transition:color .35s ease;
+}
+.verdict .val .pct{font-size:18px;font-weight:400;color:var(--ink-3)}
+.verdict[data-lv="1"] .val{color:var(--cyan)}
+.verdict[data-lv="2"] .val{color:var(--amber-2)}
+.verdict[data-lv="3"] .val{color:var(--amber)}
+.verdict[data-lv="4"] .val{color:var(--ember)}
+.verdict .word{
+  font-family:var(--f-ui);
+  font-weight:700;
+  font-size:13px;
+  letter-spacing:.04em;
+  color:var(--ink);
+}
+.verdict .sub{
+  font-family:var(--f-num);
+  font-size:11px;
+  color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
+
+/* メーター(単色・琥珀) */
+.meters{display:grid;gap:7px;align-content:start}
+.meter{display:grid;grid-template-columns:1fr auto;gap:2px var(--s2);align-items:center}
+.meter .m-lab{
+  grid-column:1;
+  display:flex; align-items:baseline; gap:6px;
+  font-size:11px;
+  color:var(--ink-2);
+  white-space:nowrap;
+}
+.meter .m-lab .en{
+  font-family:var(--f-lab);
+  font-size:9px; letter-spacing:.14em;
+  color:var(--ink-3);
+}
+.meter .m-num{
+  grid-column:2; grid-row:1 / span 2;
+  font-family:var(--f-num);
+  font-size:13px;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink);
+  min-width:3ch;
+  text-align:right;
+}
+.track{
+  grid-column:1; grid-row:2;
+  height:5px;
+  background:var(--panel-2);
+  border-radius:2px;
+  overflow:hidden;
+}
+.fill{
+  height:100%;
+  width:0%;
+  background:var(--amber);
+  border-radius:0 3px 3px 0;
+  transition:width .18s linear;
+}
+.meter[data-est="1"] .m-lab{color:var(--ink-3)}
+.meter[data-est="1"] .fill{background:var(--amber-2)}
+
+/* 60秒トレース */
+.trace{
+  display:grid;
+  grid-template-columns:1fr auto;
+  align-items:end;
+  gap:var(--s2);
+  border-top:1px solid var(--line);
+  padding-top:var(--s2);
+}
+#spark{display:block;width:100%;height:38px}
+.trace .t-lab{
+  font-family:var(--f-lab);
+  font-size:9px; letter-spacing:.14em;
+  color:var(--ink-3);
+  white-space:nowrap;
+  padding-bottom:2px;
+}
+
+/* 操作列 */
+.controls{
+  display:flex;
+  align-items:center;
+  gap:var(--s3);
+  flex-wrap:wrap;
+  border-top:1px solid var(--line);
+  padding-top:var(--s3);
+}
+.sens{display:flex;align-items:center;gap:var(--s2)}
+.sens > span{
+  font-family:var(--f-lab);
+  font-size:10px; letter-spacing:.14em;
+  color:var(--ink-3);
+}
+.seg{display:flex;border:1px solid var(--line-2);border-radius:7px;overflow:hidden}
+.seg button{
+  appearance:none;
+  background:transparent;
+  border:none;
+  border-right:1px solid var(--line-2);
+  color:var(--ink-2);
+  font-family:var(--f-ui);
+  font-weight:500;
+  font-size:12px;
+  padding:7px 12px;
+  cursor:pointer;
+}
+.seg button:last-child{border-right:none}
+.seg button[aria-pressed="true"]{background:var(--amber);color:#120D04;font-weight:700}
+.seg button:hover:not([aria-pressed="true"]){color:var(--ink);background:var(--panel-2)}
+
+.ctrl-spacer{flex:1 1 auto}
+
+/* 説明 */
+.about{
+  border-top:1px solid var(--line);
+  padding-top:var(--s2);
+}
+.about summary{
+  font-family:var(--f-ui);
+  font-size:12px;
+  color:var(--ink-2);
+  cursor:pointer;
+  list-style:none;
+  display:flex; align-items:center; gap:6px;
+}
+.about summary::-webkit-details-marker{display:none}
+.about summary::before{content:"?";font-family:var(--f-lab);font-weight:700;color:var(--amber);font-size:11px;border:1px solid var(--amber-3);border-radius:50%;width:15px;height:15px;display:grid;place-items:center;flex:none}
+.about summary:hover{color:var(--ink)}
+.about[open] summary{margin-bottom:var(--s2)}
+.about-body{
+  font-size:12px;
+  line-height:1.7;
+  color:var(--ink-2);
+  max-width:62ch;
+  display:grid;
+  gap:var(--s2);
+}
+.about-body strong{color:var(--ink);font-weight:700}
+.about-body ul{margin:0;padding-left:1.1em;display:grid;gap:3px}
+.about-body .warn{
+  color:var(--ink-2);
+  border-left:2px solid var(--ember);
+  padding-left:10px;
+}
+
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+@media (prefers-reduced-motion:reduce){
+  .sweep{animation:none;top:50%}
+  .fill,.verdict .val{transition:none}
+}
+
+/* 横向き: デッキを右側へ回す */
+@media (orientation:landscape) and (min-width:700px){
+  .app{grid-template-rows:auto minmax(0,1fr);grid-template-columns:minmax(0,1fr) 330px}
+  .rail{grid-column:1 / -1}
+  .scope{grid-column:1;grid-row:2}
+  .deck{
+    grid-column:2; grid-row:2;
+    border-top:none;
+    border-left:1px solid var(--line);
+    overflow-y:auto;
+    align-content:start;
+  }
+  .readout{grid-template-columns:1fr}
+}
+</style>
+
+</head>
+<body>
+<div class="app">
+
+  <header class="rail">
+    <div class="mark">
+      <span class="jp">生体スキャナー</span>
+      <span class="en">BIOSCANNER</span>
+    </div>
+    <div class="rail-spacer"></div>
+    <div class="state" id="state" data-s="off"><span class="dot"></span><span id="stateText">待機</span></div>
+    <button class="icon-btn" id="btnHeat" aria-pressed="true" title="ヒートマップ表示" aria-label="ヒートマップ表示">▚</button>
+    <button class="icon-btn" id="btnTorch" hidden title="ライト" aria-label="ライト">☀</button>
+    <button class="icon-btn" id="btnFlip" title="カメラ切替" aria-label="カメラ切替">⇄</button>
+  </header>
+
+  <main class="scope" id="scope">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div class="sweep" id="sweep" hidden></div>
+
+    <div class="veil" id="veil">
+      <h1 id="veilTitle">かざした範囲の生体反応を探す</h1>
+      <p id="veilText">背面カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。</p>
+      <button class="start" id="btnStart">カメラを起動</button>
+    </div>
+  </main>
+
+  <footer class="deck">
+
+    <div class="readout">
+      <div class="verdict" id="verdict" data-lv="0">
+        <span class="lab">BIO SIGNAL / 生体反応</span>
+        <span class="val"><span id="vNum">--</span><span class="pct">%</span></span>
+        <span class="word" id="vWord">カメラ停止中</span>
+        <span class="sub" id="vSub">—</span>
+      </div>
+
+      <div class="meters">
+        <div class="meter">
+          <span class="m-lab">動き<span class="en">MOTION</span></span>
+          <span class="m-num" id="nMotion">0</span>
+          <div class="track"><div class="fill" id="fMotion"></div></div>
+        </div>
+        <div class="meter">
+          <span class="m-lab">律動<span class="en">RHYTHM</span></span>
+          <span class="m-num" id="nRhythm">0</span>
+          <div class="track"><div class="fill" id="fRhythm"></div></div>
+        </div>
+        <div class="meter" data-est="1">
+          <span class="m-lab">温感(色調推定)<span class="en">WARMTH</span></span>
+          <span class="m-num" id="nWarm">0</span>
+          <div class="track"><div class="fill" id="fWarm"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="trace">
+      <canvas id="spark"></canvas>
+      <span class="t-lab">直近60秒</span>
+    </div>
+
+    <div class="controls">
+      <div class="sens">
+        <span>感度</span>
+        <div class="seg" id="segSens" role="group" aria-label="感度">
+          <button type="button" data-v="0" aria-pressed="false">低</button>
+          <button type="button" data-v="1" aria-pressed="true">中</button>
+          <button type="button" data-v="2" aria-pressed="false">高</button>
+        </div>
+      </div>
+      <div class="ctrl-spacer"></div>
+      <div class="seg">
+        <button type="button" id="btnStop">停止</button>
+      </div>
+    </div>
+
+    <details class="about">
+      <summary>この測定について</summary>
+      <div class="about-body">
+        <p>ブラウザから温度センサー(サーモグラフィ)は使えません。スマートフォンのカメラは熱を捉えないため、本当の体温測定は原理的に不可能です。このアプリは代わりに次の3つを合成しています。</p>
+        <ul>
+          <li><strong>動き</strong> — 映像の輝度差分から実測。カメラ自体が動くと無効化され、取得をやり直します。</li>
+          <li><strong>律動</strong> — その明るさの揺れが呼吸帯(約9〜35回/分)や脈拍帯(約50〜180回/分)の周期を持つかを周波数解析で判定。風や水面のゆらぎと生体を区別する核になる部分です。</li>
+          <li><strong>温感</strong> — 色相と彩度から肌・毛色らしさを<strong>推定</strong>したもの。温度ではありません。</li>
+        </ul>
+        <p class="warn">結果は生体の存在を確証するものではありません。葉の揺れ、点滅する光、揺れる布などを生体と誤判定することがあります。人命・安全・医療の判断には使用しないでください。</p>
+        <p>映像はすべて端末内で処理され、どこにも送信・保存されません。</p>
+      </div>
+    </details>
+
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* ══ 解析パラメータ ══════════════════════════════════
+   映像を 48×36 の格子に縮小し、各セルの輝度を時系列バッファに貯める。
+   そこから「動きの強さ」「揺れの周期性」「色の暖かさ」を取り出す。 */
+const AW = 48, AH = 36, NC = AW * AH;   // 解析格子
+const NBUF = 128;                        // 時系列バッファ長
+const FS = 15;                           // 解析レート(Hz) → 128/15 ≒ 8.5秒分
+const READY_MIN = 48;                    // 暫定判定を出す最小フレーム数(≒3.2秒)
+const SPEC_EVERY = 8;                    // 周波数解析の間隔(tick)
+const CAND = 72;                         // 周波数解析する候補セル数
+const K_LO = 2, K_HI = 26;               // 解析ビン(f = k·FS/NBUF)
+const K_BREATH_HI = 5;                   // 呼吸帯 k=2..5  → 0.23–0.59Hz
+const K_PULSE_LO = 7;                    // 脈拍帯 k=7..26 → 0.82–3.05Hz
+
+const ring   = new Float32Array(NC * NBUF);
+const prevY  = new Float32Array(NC);
+const motion = new Float32Array(NC);
+const warm   = new Float32Array(NC);
+const rhythm = new Float32Array(NC);
+const score  = new Float32Array(NC);
+const smooth = new Float32Array(NC);
+const sig    = new Float32Array(NBUF);
+const hann   = new Float32Array(NBUF);
+const mags   = new Float32Array(K_HI + 1);
+const order  = new Int32Array(NC);
+const blobId = new Int32Array(NC);
+const stack  = new Int32Array(NC);
+for (let t = 0; t < NBUF; t++) hann[t] = 0.5 - 0.5 * Math.cos(2 * Math.PI * t / (NBUF - 1));
+for (let i = 0; i < NC; i++) order[i] = i;
+
+let head = 0, filled = 0, tick = 0;
+let gmEma = 0, moving = false;
+let running = false, rafId = 0, lastTick = 0;
+let facing = "environment", track = null, torchOn = false;
+let showHeat = true;
+let sens = 1;
+const THR = [0.52, 0.40, 0.30];          // 低 / 中 / 高 感度のしきい値
+
+let verdictEma = 0, peak = 0;
+let mMotion = 0, mRhythm = 0, mWarm = 0, topBpm = 0, topBand = "";
+let blobs = [];
+
+/* トレース: 3Hz × 180 = 直近60秒 */
+const TRACE_N = 180;
+const traceBuf = new Float32Array(TRACE_N).fill(-1);
+let traceHead = 0;
+
+/* ══ DOM ══ */
+const $ = (id) => document.getElementById(id);
+const video = $("video"), overlay = $("overlay"), scope = $("scope");
+const veil = $("veil"), veilTitle = $("veilTitle"), veilText = $("veilText");
+const stateEl = $("state"), stateText = $("stateText"), sweep = $("sweep");
+const verdictEl = $("verdict"), vNum = $("vNum"), vWord = $("vWord"), vSub = $("vSub");
+const octx = overlay.getContext("2d");
+const spark = $("spark"), sctx = spark.getContext("2d");
+
+/* 解析用の小さなオフスクリーン */
+const acan = document.createElement("canvas");
+acan.width = AW; acan.height = AH;
+const actx = acan.getContext("2d", { willReadFrequently: true });
+
+/* ヒートマップ用(AW×AH を拡大して描く) */
+const hcan = document.createElement("canvas");
+hcan.width = AW; hcan.height = AH;
+const hctx = hcan.getContext("2d");
+const himg = hctx.createImageData(AW, AH);
+
+const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+
+/* ══ カメラ ══════════════════════════════════════ */
+async function start() {
+  if (!window.isSecureContext) {
+    return fail("安全な接続が必要です", "カメラは HTTPS のページでのみ使用できます。このページを https:// で開き直してください。");
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return fail("カメラを利用できません", "このブラウザはカメラ取得に対応していません。Safari または Chrome の最新版でお試しください。");
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    stop(false);
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    track = stream.getVideoTracks()[0] || null;
+    setupTorch();
+    requestWakeLock();
+    veil.hidden = true;
+    running = true;
+    reset();
+    lastTick = 0;
+    rafId = requestAnimationFrame(loop);
+  } catch (e) {
+    const n = e && e.name;
+    if (n === "NotAllowedError" || n === "SecurityError")
+      fail("カメラの許可が必要です", "ブラウザのアドレスバーのカメラ設定から、このページにカメラの使用を許可してください。許可後にもう一度起動します。");
+    else if (n === "NotFoundError" || n === "OverconstrainedError")
+      fail("カメラが見つかりません", "利用できるカメラを検出できませんでした。外部カメラを使う場合は接続を確認してください。");
+    else if (n === "NotReadableError")
+      fail("カメラを使用できません", "他のアプリがカメラを使用している可能性があります。そのアプリを閉じてから再度お試しください。");
+    else
+      fail("カメラを起動できませんでした", "もう一度お試しください。" + (n ? "(" + n + ")" : ""));
+  }
+}
+
+function fail(title, text) {
+  veil.hidden = false;
+  veilTitle.textContent = title;
+  veilText.innerHTML = "";
+  veilText.className = "err";
+  veilText.textContent = text;
+  setState("off", "エラー");
+}
+
+function stop(showVeil = true) {
+  running = false;
+  if (rafId) cancelAnimationFrame(rafId), rafId = 0;
+  const s = video.srcObject;
+  if (s) s.getTracks().forEach((t) => t.stop());
+  video.srcObject = null;
+  track = null; torchOn = false;
+  $("btnTorch").hidden = true;
+  $("btnTorch").setAttribute("aria-pressed", "false");
+  releaseWakeLock();
+  sweep.hidden = true;
+  if (showVeil) {
+    veil.hidden = false;
+    veilTitle.textContent = "かざした範囲の生体反応を探す";
+    veilText.className = "";
+    veilText.innerHTML = "背面カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。";
+    setState("off", "待機");
+    blobs = [];
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    verdictEl.dataset.lv = "0";
+    vNum.textContent = "--"; vWord.textContent = "カメラ停止中"; vSub.textContent = "—";
+    setMeters(0, 0, 0);
+  }
+}
+
+function reset() {
+  ring.fill(0); prevY.fill(0); motion.fill(0);
+  warm.fill(0); rhythm.fill(0); score.fill(0); smooth.fill(0);
+  head = 0; filled = 0; tick = 0; gmEma = 0; moving = false;
+  verdictEma = 0; blobs = []; topBpm = 0; topBand = ""; peak = 0;
+  mMotion = mRhythm = mWarm = 0;
+  traceBuf.fill(-1); traceHead = 0;
+}
+
+function setupTorch() {
+  const btn = $("btnTorch");
+  try {
+    const caps = track && track.getCapabilities ? track.getCapabilities() : null;
+    btn.hidden = !(caps && "torch" in caps && caps.torch);
+  } catch { btn.hidden = true; }
+}
+
+let wakeLock = null;
+async function requestWakeLock() {
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+}
+function releaseWakeLock() {
+  try { wakeLock && wakeLock.release(); } catch {}
+  wakeLock = null;
+}
+
+function setState(s, text) {
+  stateEl.dataset.s = s;
+  stateText.textContent = text;
+}
+
+/* ══ 主ループ ════════════════════════════════════ */
+function loop(ts) {
+  if (!running) return;
+  rafId = requestAnimationFrame(loop);
+  if (video.readyState < 2 || !video.videoWidth) return;
+  if (ts - lastTick < 1000 / FS - 1) { render(); return; }
+  lastTick = ts;
+
+  analyze();
+  if (tick % SPEC_EVERY === 0) spectral();
+  fuse();
+  if (tick % 5 === 0) pushTrace();
+  tick++;
+  render();
+  updateDeck();
+}
+
+/* 1フレーム: 輝度・動き・色の暖かさ */
+function analyze() {
+  actx.drawImage(video, 0, 0, AW, AH);
+  let data;
+  try { data = actx.getImageData(0, 0, AW, AH).data; } catch { return; }
+
+  let nMove = 0;
+  for (let i = 0; i < NC; i++) {
+    const p = i << 2;
+    const r = data[p], g = data[p + 1], b = data[p + 2];
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+
+    /* 暖色らしさ: 色相が橙〜肌色帯にあり、彩度があり、白飛び/黒潰れでない */
+    const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    const d = mx - mn;
+    let w = 0;
+    if (mx === r && d > 6 && y > 34 && y < 226) {
+      const h = 60 * ((g - b) / d);          // 赤が最大 → -60..60°
+      if (h >= -12 && h <= 56) {
+        const hueW = 1 - Math.abs(h - 22) / 46;
+        const satW = Math.min(1, (d / mx) / 0.45);
+        w = Math.max(0, hueW) * satW;
+      }
+    }
+    warm[i] += (w - warm[i]) * 0.08;
+
+    const dy = Math.abs(y - prevY[i]);
+    prevY[i] = y;
+    if (dy > 2.5) nMove++;
+    motion[i] += (dy - motion[i]) * 0.18;
+    ring[i * NBUF + head] = y;
+  }
+
+  head = (head + 1) % NBUF;
+  if (filled < NBUF) filled++;
+
+  /* カメラ自体の移動判定。動き量の合計ではなく「動いているセルの割合」で見る
+     ── 合計で見ると大きな被写体が横切っただけで移動と誤判定し、せっかく
+     貯めたバッファを捨ててしまう。パンなら全セルが動き、被写体なら一部。 */
+  gmEma += (nMove / NC - gmEma) * 0.3;
+  if (!moving && gmEma > 0.55) moving = true;
+  else if (moving && gmEma < 0.32) moving = false;
+  if (moving) filled = 0;
+}
+
+/* Goertzel法: n点の信号から k番ビンの振幅 */
+function goertzel(s, n, k) {
+  const c = 2 * Math.cos(2 * Math.PI * k / n);
+  let s1 = 0, s2 = 0;
+  for (let i = 0; i < n; i++) { const v = s[i] + c * s1 - s2; s2 = s1; s1 = v; }
+  const m = s1 * s1 + s2 * s2 - c * s1 * s2;
+  return m > 0 ? Math.sqrt(m) : 0;
+}
+
+/* 候補セルの時系列を周波数解析し、呼吸帯/脈拍帯のピークの際立ちを律動スコアに */
+function spectral() {
+  for (let i = 0; i < NC; i++) rhythm[i] *= 0.55;
+  topBpm = 0; topBand = "";
+  if (filled < NBUF || moving) return;
+
+  /* 動きの強い順に候補を選ぶ(静止して呼吸するだけの対象も微小な動きで上位に来る) */
+  const idx = Array.prototype.slice.call(order);
+  idx.sort((a, b) => motion[b] - motion[a]);
+
+  let bestR = 0;
+  for (let c = 0; c < CAND; c++) {
+    const i = idx[c];
+    const base = i * NBUF;
+    let mean = 0;
+    for (let t = 0; t < NBUF; t++) { const v = ring[base + (head + t) % NBUF]; sig[t] = v; mean += v; }
+    mean /= NBUF;
+    let sd = 0;
+    for (let t = 0; t < NBUF; t++) { sig[t] -= mean; sd += sig[t] * sig[t]; }
+    sd = Math.sqrt(sd / NBUF);
+    for (let t = 0; t < NBUF; t++) sig[t] *= hann[t];
+
+    let sum = 0, bB = 0, kB = 0, bP = 0, kP = 0;
+    for (let k = K_LO; k <= K_HI; k++) {
+      const m = goertzel(sig, NBUF, k);
+      mags[k] = m; sum += m;
+      if (k <= K_BREATH_HI) { if (m > bB) { bB = m; kB = k; } }
+      else if (k >= K_PULSE_LO) { if (m > bP) { bP = m; kP = k; } }
+    }
+    const meanMag = sum / (K_HI - K_LO + 1) || 1e-9;
+    const isB = bB >= bP;
+    const peakMag = isB ? bB : bP;
+    const kTop = isB ? kB : kP;
+
+    /* センサーノイズだけで偶然ピークが立つのを抑えるため振幅で門を設ける */
+    const ampGate = clamp01((sd - 0.6) / 2.4);
+    const r = clamp01((peakMag / meanMag - 1.8) / 2.6) * ampGate;
+    rhythm[i] = Math.max(rhythm[i], r);
+
+    if (r > bestR) {
+      bestR = r;
+      topBpm = Math.round(kTop * FS / NBUF * 60);
+      topBand = isB ? "呼吸帯" : "脈拍帯";
+    }
+  }
+}
+
+/* 3成分を合成 → 空間平滑化 → 連結成分(ブロブ)抽出 */
+function fuse() {
+  for (let i = 0; i < NC; i++) {
+    const mN = Math.pow(clamp01((motion[i] - 0.4) / 7), 0.75);
+    score[i] = 0.40 * mN + 0.40 * rhythm[i] + 0.20 * warm[i];
+  }
+
+  /* 3×3 平均でごま塩を潰す */
+  for (let y = 0; y < AH; y++) {
+    for (let x = 0; x < AW; x++) {
+      let s = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy; if (yy < 0 || yy >= AH) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx; if (xx < 0 || xx >= AW) continue;
+          s += score[yy * AW + xx]; n++;
+        }
+      }
+      smooth[y * AW + x] = s / n;
+    }
+  }
+
+  /* 動き・温感は約3秒で暫定判定を出せる。律動はバッファ満了まで 0 のまま
+     なので、その間は合成値が構造的に上限 0.60 に抑えられる(= 暫定扱い)。 */
+  const ready = filled >= READY_MIN && !moving;
+  if (!ready) {
+    blobs = [];
+    verdictEma += (0 - verdictEma) * 0.25;
+    mMotion += (0 - mMotion) * 0.2;
+    mRhythm += (0 - mRhythm) * 0.2;
+    mWarm += (0 - mWarm) * 0.2;
+    return;
+  }
+
+  /* 連結成分 */
+  const thr = THR[sens];
+  blobId.fill(0);
+  blobs = [];
+  let id = 0;
+  for (let s0 = 0; s0 < NC; s0++) {
+    if (blobId[s0] || smooth[s0] < thr) continue;
+    id++;
+    let sp = 0; stack[sp++] = s0; blobId[s0] = id;
+    let n = 0, sum = 0, mx = 0, x0 = AW, x1 = -1, y0 = AH, y1 = -1;
+    while (sp > 0) {
+      const i = stack[--sp];
+      const x = i % AW, y = (i - x) / AW;
+      n++; sum += smooth[i];
+      if (smooth[i] > mx) mx = smooth[i];
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0      && !blobId[i - 1]  && smooth[i - 1]  >= thr) { blobId[i - 1]  = id; stack[sp++] = i - 1; }
+      if (x < AW - 1 && !blobId[i + 1]  && smooth[i + 1]  >= thr) { blobId[i + 1]  = id; stack[sp++] = i + 1; }
+      if (y > 0      && !blobId[i - AW] && smooth[i - AW] >= thr) { blobId[i - AW] = id; stack[sp++] = i - AW; }
+      if (y < AH - 1 && !blobId[i + AW] && smooth[i + AW] >= thr) { blobId[i + AW] = id; stack[sp++] = i + AW; }
+    }
+    if (n >= 4) blobs.push({ id, x0, y0, x1, y1, n, v: (sum / n) * 0.45 + mx * 0.55 });
+  }
+  blobs.sort((a, b) => b.v - a.v);
+  blobs = blobs.slice(0, 3);
+
+  /* 判定値 = 最有力ブロブの強さ */
+  const target = blobs.length ? clamp01((blobs[0].v - 0.18) / 0.62) : 0;
+  verdictEma += (target - verdictEma) * 0.18;
+
+  /* メーターは最有力ブロブ領域の平均 */
+  if (blobs.length) {
+    const b = blobs[0];
+    let sm = 0, sr = 0, sw = 0, n = 0;
+    for (let y = b.y0; y <= b.y1; y++) {
+      for (let x = b.x0; x <= b.x1; x++) {
+        const i = y * AW + x;
+        if (blobId[i] !== b.id) continue;   /* 外接矩形に混じる別ブロブを除く */
+        sm += Math.pow(clamp01((motion[i] - 0.4) / 7), 0.75);
+        sr += rhythm[i]; sw += warm[i]; n++;
+      }
+    }
+    if (n) {
+      mMotion += (sm / n - mMotion) * 0.2;
+      mRhythm += (sr / n - mRhythm) * 0.2;
+      mWarm   += (sw / n - mWarm)   * 0.2;
+    }
+  } else {
+    mMotion += (0 - mMotion) * 0.2;
+    mRhythm += (0 - mRhythm) * 0.2;
+    mWarm   += (0 - mWarm)   * 0.2;
+  }
+}
+
+/* ══ 描画 ════════════════════════════════════════ */
+
+/* object-fit:contain で実際に映っている矩形を求め、重畳を正確に合わせる */
+function fitRect(cw, ch, vw, vh) {
+  if (!vw || !vh) return { x: 0, y: 0, w: cw, h: ch };
+  const s = Math.min(cw / vw, ch / vh);
+  const w = vw * s, h = vh * s;
+  return { x: (cw - w) / 2, y: (ch - h) / 2, w, h };
+}
+
+/* サーマル系ランプ: 透明 → 青緑 → 琥珀 → 朱 → 白熱 */
+const STOPS = [
+  [0.00,  26,  52,  50,   0],
+  [0.30,  40, 124, 116,  86],
+  [0.54, 255, 179,  65, 162],
+  [0.78, 255,  91,  55, 202],
+  [1.00, 255, 232, 196, 228]
+];
+function rampTo(v, out, o) {
+  let i = 0;
+  while (i < STOPS.length - 2 && v > STOPS[i + 1][0]) i++;
+  const a = STOPS[i], b = STOPS[i + 1];
+  const t = (v - a[0]) / (b[0] - a[0] || 1);
+  const k = t < 0 ? 0 : t > 1 ? 1 : t;
+  out[o]     = a[1] + (b[1] - a[1]) * k;
+  out[o + 1] = a[2] + (b[2] - a[2]) * k;
+  out[o + 2] = a[3] + (b[3] - a[3]) * k;
+  out[o + 3] = a[4] + (b[4] - a[4]) * k;
+}
+
+let dpr = 1;
+function sizeCanvases() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const r = scope.getBoundingClientRect();
+  overlay.width = Math.max(1, Math.round(r.width * dpr));
+  overlay.height = Math.max(1, Math.round(r.height * dpr));
+  const sr = spark.getBoundingClientRect();
+  spark.width = Math.max(1, Math.round(sr.width * dpr));
+  spark.height = Math.max(1, Math.round(sr.height * dpr));
+  drawSpark();
+}
+
+function render() {
+  const W = overlay.width, H = overlay.height;
+  octx.clearRect(0, 0, W, H);
+  const R = fitRect(W, H, video.videoWidth, video.videoHeight);
+
+  const acquiring = filled < READY_MIN || moving;
+  sweep.hidden = !acquiring;
+
+  if (showHeat && !acquiring) {
+    const px = himg.data;
+    for (let i = 0; i < NC; i++) rampTo(clamp01((smooth[i] - 0.14) / 0.76), px, i << 2);
+    hctx.putImageData(himg, 0, 0);
+    octx.save();
+    octx.globalCompositeOperation = "lighter";
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = "high";
+    octx.globalAlpha = 0.82;
+    octx.drawImage(hcan, R.x, R.y, R.w, R.h);
+    octx.restore();
+  }
+
+  /* 枠(四隅のかぎ括弧)+ ラベル */
+  const cw = R.w / AW, chh = R.h / AH;
+  octx.lineWidth = Math.max(1.5, 2 * dpr);
+  for (let bi = 0; bi < blobs.length; bi++) {
+    const b = blobs[bi];
+    const x = R.x + b.x0 * cw, y = R.y + b.y0 * chh;
+    const w = (b.x1 - b.x0 + 1) * cw, h = (b.y1 - b.y0 + 1) * chh;
+    const v = clamp01((b.v - 0.18) / 0.62);
+    const col = v > 0.66 ? "#FF5B37" : v > 0.38 ? "#FFB341" : "#45D3C0";
+    octx.strokeStyle = col;
+    octx.globalAlpha = bi === 0 ? 1 : 0.5;
+    const L = Math.min(w, h) * 0.28 + 4 * dpr;
+    octx.beginPath();
+    octx.moveTo(x, y + L);           octx.lineTo(x, y);          octx.lineTo(x + L, y);
+    octx.moveTo(x + w - L, y);       octx.lineTo(x + w, y);      octx.lineTo(x + w, y + L);
+    octx.moveTo(x + w, y + h - L);   octx.lineTo(x + w, y + h);  octx.lineTo(x + w - L, y + h);
+    octx.moveTo(x + L, y + h);       octx.lineTo(x, y + h);      octx.lineTo(x, y + h - L);
+    octx.stroke();
+
+    if (bi === 0) {
+      const t = Math.round(v * 100) + "%";
+      octx.font = "600 " + Math.round(13 * dpr) + "px 'IBM Plex Mono', monospace";
+      const tw = octx.measureText(t).width;
+      const bh = 19 * dpr, pad = 6 * dpr;
+      const by = y - bh - 3 * dpr < R.y ? y + h + 3 * dpr : y - bh - 3 * dpr;
+      octx.globalAlpha = 0.92;
+      octx.fillStyle = "#080D0E";
+      octx.fillRect(x, by, tw + pad * 2, bh);
+      octx.fillStyle = col;
+      octx.fillRect(x, by, 2 * dpr, bh);
+      octx.globalAlpha = 1;
+      octx.fillStyle = "#EAF0ED";
+      octx.textBaseline = "middle";
+      octx.fillText(t, x + pad, by + bh / 2);
+    }
+    octx.globalAlpha = 1;
+  }
+
+  /* 中央レティクル */
+  const cx = R.x + R.w / 2, cy = R.y + R.h / 2, g = 6 * dpr, a = 13 * dpr;
+  octx.strokeStyle = "rgba(234,240,237,.34)";
+  octx.lineWidth = Math.max(1, 1 * dpr);
+  octx.beginPath();
+  octx.moveTo(cx - g - a, cy); octx.lineTo(cx - g, cy);
+  octx.moveTo(cx + g, cy);     octx.lineTo(cx + g + a, cy);
+  octx.moveTo(cx, cy - g - a); octx.lineTo(cx, cy - g);
+  octx.moveTo(cx, cy + g);     octx.lineTo(cx, cy + g + a);
+  octx.stroke();
+}
+
+/* ══ デッキ更新 ══════════════════════════════════ */
+const WORDS = [
+  [0.00, "反応なし",       "0"],
+  [0.26, "微弱な反応",     "1"],
+  [0.46, "生体の可能性",   "2"],
+  [0.66, "強い生体反応",   "3"],
+  [0.82, "明確な生体反応", "4"]
+];
+
+function updateDeck() {
+  /* move = カメラが動いている / acq = 暫定判定にも足りない /
+     part = 動き・温感のみ有効 / full = 律動解析も有効 */
+  const phase = moving ? "move"
+              : filled < READY_MIN ? "acq"
+              : filled < NBUF ? "part" : "full";
+
+  if (phase === "move")      setState("hold", "移動中 — 静止してください");
+  else if (phase === "acq")  setState("hold", "基準取得 " + Math.round(filled / READY_MIN * 100) + "%");
+  else if (phase === "part") setState("live", "走査中 — 律動解析まで " + ((NBUF - filled) / FS).toFixed(1) + "秒");
+  else                       setState("live", "走査中 — 全帯域");
+
+  const v = verdictEma;
+  if (phase === "move" || phase === "acq") {
+    verdictEl.dataset.lv = "0";
+    vNum.textContent = "--";
+    vWord.textContent = phase === "move" ? "カメラを静止" : "基準取得中";
+    vSub.textContent = phase === "move"
+      ? "映像が安定すると解析を開始します"
+      : "あと " + Math.max(0, (READY_MIN - filled) / FS).toFixed(1) + " 秒";
+    setMeters(mMotion, mRhythm, mWarm);
+    return;
+  }
+
+  const pc = Math.round(v * 100);
+  let w = WORDS[0];
+  for (const row of WORDS) if (v >= row[0]) w = row;
+  verdictEl.dataset.lv = w[2];
+  vNum.textContent = String(pc);
+  vWord.textContent = phase === "part" ? w[1] + "(暫定)" : w[1];
+
+  if (phase === "full" && pc > peak) peak = pc;
+  const parts = [];
+  if (phase === "part") parts.push("動き・温感のみ");
+  else if (topBpm > 0 && mRhythm > 0.25) parts.push(topBand + " " + topBpm + "/分");
+  parts.push("検出 " + blobs.length + " 件");
+  if (phase === "full") parts.push("最大 " + peak + "%");
+  vSub.textContent = parts.join(" · ");
+
+  setMeters(mMotion, mRhythm, mWarm);
+}
+
+function setMeters(m, r, w) {
+  $("fMotion").style.width = (m * 100).toFixed(1) + "%";
+  $("fRhythm").style.width = (r * 100).toFixed(1) + "%";
+  $("fWarm").style.width   = (w * 100).toFixed(1) + "%";
+  $("nMotion").textContent = Math.round(m * 100);
+  $("nRhythm").textContent = Math.round(r * 100);
+  $("nWarm").textContent   = Math.round(w * 100);
+}
+
+/* ══ 60秒トレース ════════════════════════════════
+   単一系列なので凡例は不要(見出しが系列を示す)。末端を強調し、
+   現在のしきい値を破線で添える。 */
+function pushTrace() {
+  const acquiring = filled < READY_MIN || moving;
+  traceBuf[traceHead] = acquiring ? -1 : verdictEma;
+  traceHead = (traceHead + 1) % TRACE_N;
+  drawSpark();
+}
+
+function drawSpark() {
+  const W = spark.width, H = spark.height;
+  if (!W || !H) return;
+  sctx.clearRect(0, 0, W, H);
+  const pad = 2 * dpr;
+  const h = H - pad * 2;
+  const xAt = (k) => (k / (TRACE_N - 1)) * W;
+  const yAt = (v) => pad + (1 - v) * h;
+
+  /* 基線 */
+  sctx.strokeStyle = "#253230";
+  sctx.lineWidth = 1;
+  sctx.beginPath(); sctx.moveTo(0, H - pad); sctx.lineTo(W, H - pad); sctx.stroke();
+
+  /* しきい値(その値を超えると枠が出る水準) */
+  const thrV = clamp01((THR[sens] - 0.18) / 0.62);
+  sctx.strokeStyle = "#5F6E6A";
+  sctx.setLineDash([3 * dpr, 3 * dpr]);
+  sctx.beginPath(); sctx.moveTo(0, yAt(thrV)); sctx.lineTo(W, yAt(thrV)); sctx.stroke();
+  sctx.setLineDash([]);
+
+  /* 系列: 欠測(取得中)は切って描かない */
+  const segs = [];
+  let cur = null;
+  for (let k = 0; k < TRACE_N; k++) {
+    const v = traceBuf[(traceHead + k) % TRACE_N];
+    if (v < 0) { cur = null; continue; }
+    if (!cur) { cur = []; segs.push(cur); }
+    cur.push([xAt(k), yAt(v)]);
+  }
+  for (const s of segs) {
+    if (s.length < 2) continue;
+    sctx.beginPath();
+    sctx.moveTo(s[0][0], H - pad);
+    for (const p of s) sctx.lineTo(p[0], p[1]);
+    sctx.lineTo(s[s.length - 1][0], H - pad);
+    sctx.closePath();
+    sctx.fillStyle = "rgba(255,179,65,.14)";
+    sctx.fill();
+
+    sctx.beginPath();
+    sctx.moveTo(s[0][0], s[0][1]);
+    for (const p of s) sctx.lineTo(p[0], p[1]);
+    sctx.strokeStyle = "#FFB341";
+    sctx.lineWidth = 2 * dpr;
+    sctx.lineJoin = "round";
+    sctx.stroke();
+  }
+
+  /* 末端を強調(地色のリングで映像と干渉させない) */
+  const last = segs.length ? segs[segs.length - 1] : null;
+  if (last && last.length) {
+    const p = last[last.length - 1];
+    sctx.beginPath();
+    sctx.arc(p[0], p[1], 3.5 * dpr, 0, Math.PI * 2);
+    sctx.fillStyle = "#FFB341"; sctx.fill();
+    sctx.lineWidth = 2 * dpr; sctx.strokeStyle = "#101718"; sctx.stroke();
+  }
+}
+
+/* ══ 操作 ════════════════════════════════════════ */
+$("btnStart").addEventListener("click", start);
+$("btnStop").addEventListener("click", () => stop(true));
+
+$("btnFlip").addEventListener("click", () => {
+  facing = facing === "environment" ? "user" : "environment";
+  if (running) start();
+});
+
+$("btnHeat").addEventListener("click", (e) => {
+  showHeat = !showHeat;
+  e.currentTarget.setAttribute("aria-pressed", String(showHeat));
+});
+
+$("btnTorch").addEventListener("click", async (e) => {
+  if (!track) return;
+  torchOn = !torchOn;
+  try {
+    await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+    e.currentTarget.setAttribute("aria-pressed", String(torchOn));
+  } catch { torchOn = false; e.currentTarget.hidden = true; }
+});
+
+$("segSens").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-v]");
+  if (!b) return;
+  sens = Number(b.dataset.v);
+  for (const el of $("segSens").querySelectorAll("button"))
+    el.setAttribute("aria-pressed", String(el === b));
+  drawSpark();
+});
+
+window.addEventListener("resize", sizeCanvases);
+window.addEventListener("orientationchange", () => setTimeout(sizeCanvases, 350));
+video.addEventListener("loadedmetadata", sizeCanvases);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) releaseWakeLock();
+  else if (running) requestWakeLock();
+});
+
+sizeCanvases();
+</script>
+
+<script>
+/* オフライン動作(電波のない屋外で起動できるように) */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
