@@ -669,6 +669,7 @@ const warm   = new Float32Array(NC);
 const rhythm = new Float32Array(NC);
 const score  = new Float32Array(NC);
 const smooth = new Float32Array(NC);
+const blur   = new Float32Array(NC);     // 平滑化の中間(横方向のみかけた状態)
 const sig    = new Float32Array(NBUF);
 /* 外乱の時系列。これらで説明できる成分は生体由来ではない。
    bgLevel … 背景の明るさ。自動露出の揺れがここに出る。候補セル(被写体)を
@@ -690,7 +691,9 @@ const candR = new Float32Array(CAND);
 const hann   = new Float32Array(NBUF);
 const mags   = new Float32Array(K_HI + 1);
 const bg     = new Float32Array(16);     // 背景中央値を取るための作業領域
-const order  = new Int32Array(NC);
+const bins     = new Int32Array(256);   // 候補の閾値を求めるヒストグラム
+const candList = new Int32Array(NC);    // 候補セル
+const bgList   = new Int32Array(NC);    // それ以外(背景の明るさを作るのに使う)
 /* 動きの強い上位セル = 被写体になりうる場所。並進推定から外すために使う。
    外さないと推定が被写体の呼吸をわずかに吸収し、それを外乱として引いた
    ときに呼吸そのものが消えてしまう。 */
@@ -698,7 +701,6 @@ const candMask = new Uint8Array(NC);
 const blobId = new Int32Array(NC);
 const stack  = new Int32Array(NC);
 for (let t = 0; t < NBUF; t++) hann[t] = 0.5 - 0.5 * Math.cos(2 * Math.PI * t / (NBUF - 1));
-for (let i = 0; i < NC; i++) order[i] = i;
 
 let head = 0, filled = 0, tick = 0, havePrev = false;
 let gmEma = 0, moving = false;
@@ -707,6 +709,8 @@ let accX = 0, accY = 0;                  // 累積変位。手ぶれ補償の基
 let running = false, rafId = 0, lastTick = 0;
 let facing = "environment", track = null, torchOn = false;
 let showHeat = true;
+let heatDirty = true;                    // 熱マップを作り直す必要があるか
+let overlayDirty = true;                 // 重畳を描き直す必要があるか
 let sens = 1;
 const THR = [0.52, 0.40, 0.30];          // 低 / 中 / 高 感度のしきい値
 
@@ -859,7 +863,13 @@ function loop(ts) {
   if (!running) return;
   rafId = requestAnimationFrame(loop);
   if (video.readyState < 2 || !video.videoWidth) return;
-  if (ts - lastTick < 1000 / FS - 1) { render(); return; }
+
+  /* 解析は FS Hz。重畳の内容も解析のたびにしか変わらないので、
+     描画のたび(60Hz)に描き直さず、変わった時だけ描く。 */
+  if (ts - lastTick < 1000 / FS - 1) {
+    if (overlayDirty) render();
+    return;
+  }
   lastTick = ts;
 
   analyze();
@@ -867,6 +877,8 @@ function loop(ts) {
   fuse();
   if (tick % 5 === 0) pushTrace();
   tick++;
+  heatDirty = true;
+  overlayDirty = true;
   render();
   updateDeck();
 }
@@ -1043,14 +1055,14 @@ function goertzel(s, n, k) {
    各セルからこの基底方向の成分を引けば、カメラ変位の一次関数で表せる
    手ぶれ残差と、全体の明るさの揺れ(自動露出)が同時に落ちる。
    呼吸や脈拍はカメラ変位とも全体の明るさとも無関係なので残る。 */
-function prepBasis(idx) {
-  /* 背景の明るさ: 動きの弱い側のセルだけを使う。候補(= 被写体になりうる
-     セル)は必ず外す。等間隔に間引いて十分な数だけ平均する。 */
-  const step = Math.max(1, ((NC - CAND) / 240) | 0);
+function prepBasis(bg, nBg) {
+  /* 背景の明るさ: 候補(= 被写体になりうるセル)を外した側だけを使う。
+     等間隔に間引いて十分な数だけ平均する。 */
+  const step = Math.max(1, (nBg / 240) | 0);
   let nbg = 0;
   bgLevel.fill(0);
-  for (let c = CAND; c < NC; c += step) {
-    const base = idx[c] * NBUF;
+  for (let c = 0; c < nBg; c += step) {
+    const base = bg[c] * NBUF;
     for (let t = 0; t < NBUF; t++) bgLevel[t] += ring[base + (head + t) % NBUF];
     nbg++;
   }
@@ -1077,18 +1089,35 @@ function spectral() {
   topBpm = 0; topBand = "";
   if (filled < NBUF || moving) return;
 
-  /* 動きの強い順に候補を選ぶ(静止して呼吸するだけの対象も微小な動きで上位に来る) */
-  const idx = Array.prototype.slice.call(order);
-  idx.sort((a, b) => motion[b] - motion[a]);
+  /* 動きの強いセルを候補に選ぶ(静止して呼吸するだけの対象も微小な動きで
+     上位に来る)。全体を並べ替えると 1728 要素のソートと配列確保が毎回
+     発生して突出した負荷になるため、ヒストグラムで上位 CAND 個が入る
+     閾値だけを求めて振り分ける。順位は使わないので並べ替えは要らない。 */
+  let mx = 0;
+  for (let i = 0; i < NC; i++) if (motion[i] > mx) mx = motion[i];
+  let nCand = 0, nBg = 0;
+  if (mx > 0) {
+    const sc = 255 / mx;
+    bins.fill(0);
+    for (let i = 0; i < NC; i++) bins[(motion[i] * sc) | 0]++;
+    let acc = 0, cut = 0;
+    for (let q = 255; q >= 0; q--) { acc += bins[q]; if (acc >= CAND) { cut = q; break; } }
+    const thr = cut / sc;
+    for (let i = 0; i < NC; i++) {
+      if (motion[i] >= thr && nCand < CAND) candList[nCand++] = i;
+      else bgList[nBg++] = i;
+    }
+  }
+  if (!nCand) return;
 
   candMask.fill(0);
-  for (let c = 0; c < CAND; c++) candMask[idx[c]] = 1;
+  for (let c = 0; c < nCand; c++) candMask[candList[c]] = 1;
 
-  prepBasis(idx);
+  prepBasis(bgList, nBg);
 
   let bestR = 0;
-  for (let c = 0; c < CAND; c++) {
-    const i = idx[c];
+  for (let c = 0; c < nCand; c++) {
+    const i = candList[c];
     const base = i * NBUF;
     let mean = 0;
     for (let t = 0; t < NBUF; t++) { const v = ring[base + (head + t) % NBUF]; sig[t] = v; mean += v; }
@@ -1149,7 +1178,7 @@ function spectral() {
      できないが、広がり方でなら区別できる。 */
   for (let k = K_LO; k <= K_HI; k++) {
     let n = 0, sx = 0, sy = 0;
-    for (let c = 0; c < CAND; c++) {
+    for (let c = 0; c < nCand; c++) {
       if (candK[c] !== k || candR[c] < 0.25) continue;
       const i = candI[c], x = i % AW;
       n++; sx += x; sy += (i - x) / AW;
@@ -1157,7 +1186,7 @@ function spectral() {
     if (n < 6) continue;
     const cx = sx / n, cy = sy / n;
     let sp = 0;
-    for (let c = 0; c < CAND; c++) {
+    for (let c = 0; c < nCand; c++) {
       if (candK[c] !== k || candR[c] < 0.25) continue;
       const i = candI[c], x = i % AW, y = (i - x) / AW;
       sp += Math.hypot(x - cx, y - cy);
@@ -1166,10 +1195,10 @@ function spectral() {
     if (sp <= 8) continue;               /* 一塊 = 生体の可能性。触らない */
     /* 広がっているほど強く減衰させる */
     const damp = Math.max(0.12, 1 - (sp - 8) / 10);
-    for (let c = 0; c < CAND; c++) if (candK[c] === k) candR[c] *= damp;
+    for (let c = 0; c < nCand; c++) if (candK[c] === k) candR[c] *= damp;
   }
 
-  for (let c = 0; c < CAND; c++) {
+  for (let c = 0; c < nCand; c++) {
     const i = candI[c], r = candR[c];
     rhythm[i] = Math.max(rhythm[i], r);
     if (r > bestR) {
@@ -1187,20 +1216,21 @@ function fuse() {
     score[i] = 0.40 * mN + 0.40 * rhythm[i] + 0.20 * warm[i];
   }
 
-  /* 3×3 平均でごま塩を潰す */
+  /* 3×3 平均でごま塩を潰す。縦横2回の1次元平均に分けると、各セル9回の
+     参照と境界判定が6回で済む(結果は同じ)。 */
   for (let y = 0; y < AH; y++) {
-    for (let x = 0; x < AW; x++) {
-      let s = 0, n = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        const yy = y + dy; if (yy < 0 || yy >= AH) continue;
-        for (let dx = -1; dx <= 1; dx++) {
-          const xx = x + dx; if (xx < 0 || xx >= AW) continue;
-          s += score[yy * AW + xx]; n++;
-        }
-      }
-      smooth[y * AW + x] = s / n;
-    }
+    const o = y * AW;
+    blur[o] = (score[o] + score[o + 1]) * 0.5;
+    for (let x = 1; x < AW - 1; x++) blur[o + x] = (score[o + x - 1] + score[o + x] + score[o + x + 1]) / 3;
+    blur[o + AW - 1] = (score[o + AW - 2] + score[o + AW - 1]) * 0.5;
   }
+  for (let x = 0; x < AW; x++) smooth[x] = (blur[x] + blur[x + AW]) * 0.5;
+  for (let y = 1; y < AH - 1; y++) {
+    const o = y * AW;
+    for (let x = 0; x < AW; x++) smooth[o + x] = (blur[o + x - AW] + blur[o + x] + blur[o + x + AW]) / 3;
+  }
+  const lastRow = (AH - 1) * AW;
+  for (let x = 0; x < AW; x++) smooth[lastRow + x] = (blur[lastRow + x - AW] + blur[lastRow + x]) * 0.5;
 
   /* 動き・温感は約3秒で暫定判定を出せる。律動はバッファ満了まで 0 のまま
      なので、その間は合成値が構造的に上限 0.60 に抑えられる(= 暫定扱い)。 */
@@ -1324,16 +1354,21 @@ const STOPS = [
   [0.78, 255,  91,  55, 202],
   [1.00, 255, 232, 196, 228]
 ];
-function rampTo(v, out, o) {
+/* ランプは256段の参照表にしておく。毎セルで区間を探索すると、描画のたびに
+   1728回の探索と補間が走って無駄が大きい。 */
+const RAMP = new Uint8ClampedArray(256 * 4);
+for (let q = 0; q < 256; q++) {
+  const v = q / 255;
   let i = 0;
   while (i < STOPS.length - 2 && v > STOPS[i + 1][0]) i++;
   const a = STOPS[i], b = STOPS[i + 1];
   const t = (v - a[0]) / (b[0] - a[0] || 1);
   const k = t < 0 ? 0 : t > 1 ? 1 : t;
-  out[o]     = a[1] + (b[1] - a[1]) * k;
-  out[o + 1] = a[2] + (b[2] - a[2]) * k;
-  out[o + 2] = a[3] + (b[3] - a[3]) * k;
-  out[o + 3] = a[4] + (b[4] - a[4]) * k;
+  const o = q << 2;
+  RAMP[o]     = a[1] + (b[1] - a[1]) * k;
+  RAMP[o + 1] = a[2] + (b[2] - a[2]) * k;
+  RAMP[o + 2] = a[3] + (b[3] - a[3]) * k;
+  RAMP[o + 3] = a[4] + (b[4] - a[4]) * k;
 }
 
 let dpr = 1;
@@ -1342,6 +1377,7 @@ function sizeCanvases() {
   const r = scope.getBoundingClientRect();
   overlay.width = Math.max(1, Math.round(r.width * dpr));
   overlay.height = Math.max(1, Math.round(r.height * dpr));
+  heatDirty = true; overlayDirty = true;
   const sr = spark.getBoundingClientRect();
   spark.width = Math.max(1, Math.round(sr.width * dpr));
   spark.height = Math.max(1, Math.round(sr.height * dpr));
@@ -1357,9 +1393,19 @@ function render() {
   sweep.hidden = !acquiring;
 
   if (showHeat && !acquiring) {
-    const px = himg.data;
-    for (let i = 0; i < NC; i++) rampTo(clamp01((smooth[i] - 0.14) / 0.76), px, i << 2);
-    hctx.putImageData(himg, 0, 0);
+    /* 熱マップの中身は解析のたび(15Hz)にしか変わらない。描画のたびに
+       作り直す必要はないので、変わった時だけ作る。 */
+    if (heatDirty) {
+      const px = himg.data;
+      for (let i = 0; i < NC; i++) {
+        const v = (smooth[i] - 0.14) * 335.5;        /* = /0.76*255 */
+        const q = v < 0 ? 0 : v > 255 ? 255 : v | 0;
+        const o = i << 2, m = q << 2;
+        px[o] = RAMP[m]; px[o + 1] = RAMP[m + 1]; px[o + 2] = RAMP[m + 2]; px[o + 3] = RAMP[m + 3];
+      }
+      hctx.putImageData(himg, 0, 0);
+      heatDirty = false;
+    }
     octx.save();
     octx.globalCompositeOperation = "lighter";
     octx.imageSmoothingEnabled = true;
@@ -1417,6 +1463,7 @@ function render() {
   octx.moveTo(cx, cy - g - a); octx.lineTo(cx, cy - g);
   octx.moveTo(cx, cy + g);     octx.lineTo(cx, cy + g + a);
   octx.stroke();
+  overlayDirty = false;
 }
 
 /* ══ デッキ更新 ══════════════════════════════════ */
@@ -1606,6 +1653,7 @@ $("btnFlip").addEventListener("click", () => {
 
 $("btnHeat").addEventListener("click", (e) => {
   showHeat = !showHeat;
+  heatDirty = true; overlayDirty = true;
   e.currentTarget.setAttribute("aria-pressed", String(showHeat));
 });
 
@@ -1622,6 +1670,7 @@ $("segSens").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-v]");
   if (!b) return;
   sens = Number(b.dataset.v);
+  heatDirty = true; overlayDirty = true;
   for (const el of $("segSens").querySelectorAll("button"))
     el.setAttribute("aria-pressed", String(el === b));
   drawSpark();
@@ -1707,3 +1756,5 @@ if ("serviceWorker" in navigator) {
 </script>
 </body>
 </html>
+
+
