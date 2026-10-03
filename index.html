@@ -375,6 +375,101 @@ body{
   padding-left:10px;
 }
 
+/* ── 大きさ ─────────────────────────────────── */
+.size{
+  border-top:1px solid var(--line);
+  padding-top:var(--s2);
+  display:grid;
+  gap:var(--s2);
+}
+.s-head{display:flex;align-items:center;justify-content:space-between;gap:var(--s2)}
+.s-head .lab{
+  font-family:var(--f-lab);
+  font-size:11px; letter-spacing:.16em;
+  color:var(--ink-3);
+}
+.s-cfg{
+  appearance:none;
+  background:transparent;
+  border:1px solid var(--line-2);
+  color:var(--ink-2);
+  border-radius:6px;
+  font-family:var(--f-ui);
+  font-size:11px;
+  padding:3px 10px;
+  cursor:pointer;
+}
+.s-cfg:hover{color:var(--ink);border-color:var(--ink-3)}
+.s-cfg[aria-expanded="true"]{color:var(--amber);border-color:var(--amber-3);background:#1B1710}
+
+.s-main{display:grid;gap:2px}
+.s-val{
+  font-family:var(--f-num);
+  font-weight:600;
+  font-size:22px;
+  line-height:1.15;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink-3);
+}
+.s-val.on{color:var(--amber)}
+.s-sub{
+  font-family:var(--f-num);
+  font-size:11px;
+  color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
+
+.s-panel{
+  display:grid;
+  gap:var(--s3);
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:var(--s3);
+}
+.s-panel[hidden]{display:none}
+.field{display:grid;gap:5px}
+.field > .f-top{
+  display:flex; align-items:baseline; justify-content:space-between; gap:var(--s2);
+  font-size:11px;
+  color:var(--ink-2);
+}
+.field .f-num{
+  font-family:var(--f-num);
+  font-variant-numeric:tabular-nums;
+  color:var(--ink);
+  font-size:12px;
+}
+.field input[type="range"]{
+  appearance:none;
+  width:100%;
+  height:4px;
+  background:var(--line-2);
+  border-radius:2px;
+  outline-offset:4px;
+}
+.field input[type="range"]::-webkit-slider-thumb{
+  appearance:none;
+  width:16px;height:16px;border-radius:50%;
+  background:var(--amber);
+  border:2px solid var(--panel-2);
+  cursor:pointer;
+}
+.field input[type="range"]::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;
+  background:var(--amber);
+  border:2px solid var(--panel-2);
+  cursor:pointer;
+}
+.field[hidden]{display:none}
+.f-note{
+  font-size:11px;
+  line-height:1.6;
+  color:var(--ink-3);
+}
+.f-note.warn{color:var(--amber-2)}
+.s-panel .seg button{font-size:11px;padding:6px 10px}
+
 :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 
 @media (prefers-reduced-motion:reduce){
@@ -480,7 +575,7 @@ body{
       <div class="about-body">
         <p>ブラウザから温度センサー(サーモグラフィ)は使えません。スマートフォンのカメラは熱を捉えないため、本当の体温測定は原理的に不可能です。このアプリは代わりに次の3つを合成しています。</p>
         <ul>
-          <li><strong>動き</strong> — 映像の輝度差分から実測。カメラ自体が動くと無効化され、取得をやり直します。</li>
+          <li><strong>動き</strong> — 映像の輝度差分から実測。手持ちのぶれは、全画面の平行移動量を推定して映像を元の位置に取り直すことで打ち消しています。<strong>軽いぶれなら検出できますが、大きく揺れると感度が落ちます</strong>。カメラを振るなど補正の範囲を超えると取得をやり直します。</li>
           <li><strong>律動</strong> — その明るさの揺れが呼吸帯(約14〜35回/分)や脈拍帯(約49〜183回/分)の周期を持つかを周波数解析で判定。ピークを全帯域の平均ではなく<strong>ピーク周辺の背景</strong>と比べることで、風や水面のような広帯域の揺れを退けます。</li>
           <li><strong>温感</strong> — 色相と彩度から肌・毛色らしさを<strong>推定</strong>したもの。温度ではありません。</li>
         </ul>
@@ -515,23 +610,49 @@ const PROM_LO = 7, PROM_HI = 18;
 
 const ring   = new Float32Array(NC * NBUF);
 const prevY  = new Float32Array(NC);
+const curY   = new Float32Array(NC);     // 今フレームの輝度
+const gradX  = new Float32Array(NC);     // 空間勾配(手ぶれ補償に使う)
+const gradY  = new Float32Array(NC);
 const motion = new Float32Array(NC);
 const warm   = new Float32Array(NC);
 const rhythm = new Float32Array(NC);
 const score  = new Float32Array(NC);
 const smooth = new Float32Array(NC);
 const sig    = new Float32Array(NBUF);
+/* 外乱の時系列。これらで説明できる成分は生体由来ではない。
+   bgLevel … 背景の明るさ。自動露出の揺れがここに出る。候補セル(被写体)を
+             必ず除いて作る。被写体を含めると、たとえ寄与がわずかでもその
+             成分は呼吸と完全に相関するため、基底を正規化した時点で呼吸
+             そのものになり、引くと信号ごと消えてしまう。
+   カメラ変位は外乱基底にしない。手ぶれのエネルギーは呼吸帯そのものに
+   あるため、時間方向の回帰で引くと同じ帯域の呼吸も必ず一緒に消える。
+   手ぶれは再標本化で物理的に打ち消し、取り切れない残りは下の空間的な
+   広がりの判定で落とす。 */
+const bgLevel = new Float32Array(NBUF);
+const BASIS  = [new Float32Array(NBUF)];
+let nBasis = 0;
+
+/* 候補セルごとの解析結果。空間的な広がりの判定に使う。 */
+const candI = new Int32Array(CAND);
+const candK = new Int32Array(CAND);
+const candR = new Float32Array(CAND);
 const hann   = new Float32Array(NBUF);
 const mags   = new Float32Array(K_HI + 1);
 const bg     = new Float32Array(16);     // 背景中央値を取るための作業領域
 const order  = new Int32Array(NC);
+/* 動きの強い上位セル = 被写体になりうる場所。並進推定から外すために使う。
+   外さないと推定が被写体の呼吸をわずかに吸収し、それを外乱として引いた
+   ときに呼吸そのものが消えてしまう。 */
+const candMask = new Uint8Array(NC);
 const blobId = new Int32Array(NC);
 const stack  = new Int32Array(NC);
 for (let t = 0; t < NBUF; t++) hann[t] = 0.5 - 0.5 * Math.cos(2 * Math.PI * t / (NBUF - 1));
 for (let i = 0; i < NC; i++) order[i] = i;
 
-let head = 0, filled = 0, tick = 0;
+let head = 0, filled = 0, tick = 0, havePrev = false;
 let gmEma = 0, moving = false;
+let shiftEma = 0;                        // 全体並進の大きさ(セル/フレーム)
+let accX = 0, accY = 0;                  // 累積変位。手ぶれ補償の基準位置
 let running = false, rafId = 0, lastTick = 0;
 let facing = "environment", track = null, torchOn = false;
 let showHeat = true;
@@ -643,7 +764,10 @@ function stop(showVeil = true) {
 function reset() {
   ring.fill(0); prevY.fill(0); motion.fill(0);
   warm.fill(0); rhythm.fill(0); score.fill(0); smooth.fill(0);
+  curY.fill(0); gradX.fill(0); gradY.fill(0);
   head = 0; filled = 0; tick = 0; gmEma = 0; moving = false;
+  havePrev = false; shiftEma = 0; accX = 0; accY = 0;
+  bgLevel.fill(0); candMask.fill(0); nBasis = 0;
   verdictEma = 0; blobs = []; topBpm = 0; topBand = ""; peak = 0;
   mMotion = mRhythm = mWarm = 0;
   traceBuf.fill(-1); traceHead = 0;
@@ -694,11 +818,11 @@ function analyze() {
   let data;
   try { data = actx.getImageData(0, 0, AW, AH).data; } catch { return; }
 
-  let nMove = 0;
   for (let i = 0; i < NC; i++) {
     const p = i << 2;
     const r = data[p], g = data[p + 1], b = data[p + 2];
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    curY[i] = y;
 
     /* 暖色らしさ: 色相が橙〜肌色帯にあり、彩度があり、白飛び/黒潰れでない */
     const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
@@ -714,24 +838,102 @@ function analyze() {
       }
     }
     warm[i] += (w - warm[i]) * 0.08;
-
-    const dy = Math.abs(y - prevY[i]);
-    prevY[i] = y;
-    if (dy > 2.5) nMove++;
-    motion[i] += (dy - motion[i]) * 0.18;
-    ring[i * NBUF + head] = y;
   }
+
+  /* ── 手ぶれ補償 ──────────────────────────────────
+     手持ちでは常に微細な並進が乗る。これをそのまま動きとして数えると、
+     静止していてもバッファが毎回破棄されて実質三脚が必要になってしまう。
+     そこで空間勾配から全画面の平行移動量を最小二乗で推定し(Lucas-Kanade を
+     全画面に適用)、その分を一次近似で差し引く。ぶれで説明できない残差だけを
+     動きとして扱う。 */
+  for (let y = 1; y < AH - 1; y++) {
+    const o = y * AW;
+    for (let x = 1; x < AW - 1; x++) {
+      const i = o + x;
+      gradX[i] = (curY[i + 1] - curY[i - 1]) * 0.5;
+      gradY[i] = (curY[i + AW] - curY[i - AW]) * 0.5;
+    }
+  }
+
+  let dx = 0, dy = 0;
+  if (havePrev) {
+    /* 2回解く。1回目で大まかな並進を求め、そこから外れるセル(= 実際に
+       動いている被写体)を除いて解き直す。被写体が画面の多くを占めても
+       並進推定が引きずられにくくなる。 */
+    let rej = Infinity;
+    for (let pass = 0; pass < 2; pass++) {
+      let Sxx = 0, Syy = 0, Sxy = 0, Sxt = 0, Syt = 0;
+      for (let y = 1; y < AH - 1; y++) {
+        const o = y * AW;
+        for (let x = 1; x < AW - 1; x++) {
+          const i = o + x;
+          if (candMask[i]) continue;          /* 被写体は並進推定に混ぜない */
+          const gx = gradX[i], gy = gradY[i];
+          const it = curY[i] - prevY[i];
+          if (pass === 1 && Math.abs(it + gx * dx + gy * dy) > rej) continue;
+          Sxx += gx * gx; Syy += gy * gy; Sxy += gx * gy;
+          Sxt += gx * it; Syt += gy * it;
+        }
+      }
+      const det = Sxx * Syy - Sxy * Sxy;
+      if (Math.abs(det) < 1e-6) { dx = 0; dy = 0; break; }
+      dx = (-Sxt * Syy + Sxy * Syt) / det;
+      dy = (-Syt * Sxx + Sxy * Sxt) / det;
+      /* 推定が破綻したら補償しない(平坦な画面などで起こりうる) */
+      if (!isFinite(dx) || !isFinite(dy) || Math.abs(dx) > 3 || Math.abs(dy) > 3) { dx = 0; dy = 0; break; }
+      rej = 3.0;
+    }
+  }
+
+  /* 累積変位。ぶれは平均ゼロなので緩やかに 0 へ引き戻し、際限なく溜まるのを防ぐ */
+  accX = (accX + dx) * 0.99;
+  accY = (accY + dy) * 0.99;
+  if (accX > 3) accX = 3; else if (accX < -3) accX = -3;
+  if (accY > 3) accY = 3; else if (accY < -3) accY = -3;
+
+  let nMove = 0;
+  for (let y = 0, i = 0; y < AH; y++) {
+    for (let x = 0; x < AW; x++, i++) {
+      /* ずれた位置から双線形補間で取り直す。勾配による一次近似だと誤差が
+         変位の二乗で増え、0.3セル/フレーム程度のぶれで検出できなくなる。 */
+      const res = havePrev ? Math.abs(sampleAt(curY, x + dx, y + dy) - prevY[i]) : 0;
+      if (res > 2.5) nMove++;
+      motion[i] += (res - motion[i]) * 0.18;
+      /* 時系列は走査開始時点の位置に揃えて積む。揃えないとぶれ由来の
+         輝度変動が律動解析に広帯域ノイズとして乗り、呼吸が埋もれる。 */
+      ring[i * NBUF + head] = sampleAt(curY, x + accX, y + accY);
+    }
+  }
+
+  prevY.set(curY);
+  havePrev = true;
 
   head = (head + 1) % NBUF;
   if (filled < NBUF) filled++;
 
-  /* カメラ自体の移動判定。動き量の合計ではなく「動いているセルの割合」で見る
-     ── 合計で見ると大きな被写体が横切っただけで移動と誤判定し、せっかく
-     貯めたバッファを捨ててしまう。パンなら全セルが動き、被写体なら一部。 */
+  /* カメラ移動の判定は2系統。
+     ・並進量そのもの … 補償が効く範囲(約0.5セル/フレーム)を超えたら移動
+     ・残差セルの割合 … 回転やズームなど並進で表せない変化を拾う
+     残差の割合で見るのは、合計値で見ると大きな被写体が横切っただけで
+     移動と誤判定してしまうため。 */
+  shiftEma += (Math.hypot(dx, dy) - shiftEma) * 0.35;
   gmEma += (nMove / NC - gmEma) * 0.3;
-  if (!moving && gmEma > 0.55) moving = true;
-  else if (moving && gmEma < 0.32) moving = false;
-  if (moving) filled = 0;
+  if (!moving && (shiftEma > 0.55 || gmEma > 0.55)) moving = true;
+  else if (moving && shiftEma < 0.28 && gmEma < 0.32) moving = false;
+
+  if (moving) { filled = 0; accX = 0; accY = 0; }
+  else if (shiftEma > 0.22) filled = Math.max(0, filled - 4);   /* 軽いぶれは少し巻き戻すだけ */
+}
+
+/* 解析格子の任意の位置を双線形補間で読む。端は内側にクランプする。 */
+function sampleAt(arr, fx, fy) {
+  if (fx < 0) fx = 0; else if (fx > AW - 1.001) fx = AW - 1.001;
+  if (fy < 0) fy = 0; else if (fy > AH - 1.001) fy = AH - 1.001;
+  const x0 = fx | 0, y0 = fy | 0;
+  const tx = fx - x0, ty = fy - y0;
+  const o = y0 * AW + x0;
+  const a = arr[o], b = arr[o + 1], c = arr[o + AW], d = arr[o + AW + 1];
+  return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
 }
 
 /* Goertzel法: n点の信号から k番ビンの振幅 */
@@ -741,6 +943,38 @@ function goertzel(s, n, k) {
   for (let i = 0; i < n; i++) { const v = s[i] + c * s1 - s2; s2 = s1; s1 = v; }
   const m = s1 * s1 + s2 * s2 - c * s1 * s2;
   return m > 0 ? Math.sqrt(m) : 0;
+}
+
+/* 外乱の時系列を直交正規化した基底に整える。
+   各セルからこの基底方向の成分を引けば、カメラ変位の一次関数で表せる
+   手ぶれ残差と、全体の明るさの揺れ(自動露出)が同時に落ちる。
+   呼吸や脈拍はカメラ変位とも全体の明るさとも無関係なので残る。 */
+function prepBasis(idx) {
+  /* 背景の明るさ: 動きの弱い側のセルだけを使う。候補(= 被写体になりうる
+     セル)は必ず外す。等間隔に間引いて十分な数だけ平均する。 */
+  const step = Math.max(1, ((NC - CAND) / 240) | 0);
+  let nbg = 0;
+  bgLevel.fill(0);
+  for (let c = CAND; c < NC; c += step) {
+    const base = idx[c] * NBUF;
+    for (let t = 0; t < NBUF; t++) bgLevel[t] += ring[base + (head + t) % NBUF];
+    nbg++;
+  }
+  if (nbg) for (let t = 0; t < NBUF; t++) bgLevel[t] /= nbg;
+
+  /* 窓をかけ、単位ベクトルに正規化しておく(除去側は内積を引くだけで済む) */
+  nBasis = 0;
+  const v = BASIS[0];
+  let m = 0;
+  for (let t = 0; t < NBUF; t++) { v[t] = bgLevel[t]; m += v[t]; }
+  m /= NBUF;
+  for (let t = 0; t < NBUF; t++) v[t] = (v[t] - m) * hann[t];
+  let e = 0;
+  for (let t = 0; t < NBUF; t++) e += v[t] * v[t];
+  if (e < 1e-4) return;                  /* 明るさが一定なら除去するものがない */
+  const inv = 1 / Math.sqrt(e);
+  for (let t = 0; t < NBUF; t++) v[t] *= inv;
+  nBasis = 1;
 }
 
 /* 候補セルの時系列を周波数解析し、呼吸帯/脈拍帯のピークの際立ちを律動スコアに */
@@ -753,6 +987,11 @@ function spectral() {
   const idx = Array.prototype.slice.call(order);
   idx.sort((a, b) => motion[b] - motion[a]);
 
+  candMask.fill(0);
+  for (let c = 0; c < CAND; c++) candMask[idx[c]] = 1;
+
+  prepBasis(idx);
+
   let bestR = 0;
   for (let c = 0; c < CAND; c++) {
     const i = idx[c];
@@ -760,10 +999,20 @@ function spectral() {
     let mean = 0;
     for (let t = 0; t < NBUF; t++) { const v = ring[base + (head + t) % NBUF]; sig[t] = v; mean += v; }
     mean /= NBUF;
-    let sd = 0;
-    for (let t = 0; t < NBUF; t++) { sig[t] -= mean; sd += sig[t] * sig[t]; }
-    sd = Math.sqrt(sd / NBUF);
-    for (let t = 0; t < NBUF; t++) sig[t] *= hann[t];
+    for (let t = 0; t < NBUF; t++) sig[t] = (sig[t] - mean) * hann[t];
+
+    /* 外乱で説明できる成分を除去。基底は直交正規化済みなので内積を引くだけ */
+    for (let k = 0; k < nBasis; k++) {
+      const B = BASIS[k];
+      let dot = 0;
+      for (let t = 0; t < NBUF; t++) dot += sig[t] * B[t];
+      for (let t = 0; t < NBUF; t++) sig[t] -= dot * B[t];
+    }
+
+    /* 振幅は除去後に測る。Hann窓はRMSを√(3/8)倍にするので戻しておく。 */
+    let e = 0;
+    for (let t = 0; t < NBUF; t++) e += sig[t] * sig[t];
+    const sd = Math.sqrt(e / NBUF) / 0.6124;
 
     let bB = 0, kB = K_LO, bP = 0, kP = K_PULSE_LO;
     for (let k = K_LO; k <= K_HI; k++) {
@@ -796,12 +1045,43 @@ function spectral() {
        あくまで下限の門であって重みではないので、早く 1.0 に飽和させる。 */
     const ampGate = clamp01((sd - 0.6) / 1.2);
     const r = clamp01((prom - PROM_LO) / (PROM_HI - PROM_LO)) * ampGate;
-    rhythm[i] = Math.max(rhythm[i], r);
+    candI[c] = i; candK[c] = kTop; candR[c] = r;
+  }
 
+  /* ── 画面全体に散った周期を落とす ──────────────────────
+     取り切れなかった手ぶれの残差は、勾配のある場所すべてに同じ周期で
+     現れる。生体は一塊に固まる。そこで同じ周波数ビンを示すセルの空間的な
+     広がりを見て、散らばっているものだけを弱める。周期の種類では区別
+     できないが、広がり方でなら区別できる。 */
+  for (let k = K_LO; k <= K_HI; k++) {
+    let n = 0, sx = 0, sy = 0;
+    for (let c = 0; c < CAND; c++) {
+      if (candK[c] !== k || candR[c] < 0.25) continue;
+      const i = candI[c], x = i % AW;
+      n++; sx += x; sy += (i - x) / AW;
+    }
+    if (n < 6) continue;
+    const cx = sx / n, cy = sy / n;
+    let sp = 0;
+    for (let c = 0; c < CAND; c++) {
+      if (candK[c] !== k || candR[c] < 0.25) continue;
+      const i = candI[c], x = i % AW, y = (i - x) / AW;
+      sp += Math.hypot(x - cx, y - cy);
+    }
+    sp /= n;
+    if (sp <= 8) continue;               /* 一塊 = 生体の可能性。触らない */
+    /* 広がっているほど強く減衰させる */
+    const damp = Math.max(0.12, 1 - (sp - 8) / 10);
+    for (let c = 0; c < CAND; c++) if (candK[c] === k) candR[c] *= damp;
+  }
+
+  for (let c = 0; c < CAND; c++) {
+    const i = candI[c], r = candR[c];
+    rhythm[i] = Math.max(rhythm[i], r);
     if (r > bestR) {
       bestR = r;
-      topBpm = Math.round(kTop * FS / NBUF * 60);
-      topBand = isB ? "呼吸帯" : "脈拍帯";
+      topBpm = Math.round(candK[c] * FS / NBUF * 60);
+      topBand = candK[c] <= K_BREATH_HI ? "呼吸帯" : "脈拍帯";
     }
   }
 }
@@ -1024,8 +1304,10 @@ function updateDeck() {
               : filled < READY_MIN ? "acq"
               : filled < NBUF ? "part" : "full";
 
+  const shaky = shiftEma > 0.22;
   if (phase === "move")      setState("hold", "移動中 — 静止してください");
   else if (phase === "acq")  setState("hold", "基準取得 " + Math.round(filled / READY_MIN * 100) + "%");
+  else if (shaky)            setState("hold", "手ぶれ補正中 — 感度が下がります");
   else if (phase === "part") setState("live", "走査中 — 律動解析まで " + ((NBUF - filled) / FS).toFixed(1) + "秒");
   else                       setState("live", "走査中 — 全帯域");
 
