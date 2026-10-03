@@ -151,8 +151,13 @@ python -m http.server 8000
 index.html              アプリ本体(CSS・JS を含む単一ファイル)
 sw.js                   Service Worker(オフライン対応)
 manifest.webmanifest    PWA マニフェスト
-icons/                  アイコン一式
+icons/                  アイコン一式(icon-source.png から生成)
+icon-source.png         アイコンの元画像(白地に黒のシルエット)
 ```
+
+アイコンは元画像の余白を自動で切り詰め、黒を琥珀色・白を地色に転換して生成しています。輝度をそのまま不透明度に使うため線の縁が保たれます。`icon-maskable-512.png` は外周が切り落とされても図像が残るよう内側に寄せてあります。
+
+**アプリやアイコンを更新したら `sw.js` の `CACHE` の版を上げてください。** 上げないと、ホーム画面に追加済みの端末が古い内容を持ち続けます。
 
 外部依存は Google Fonts のみで、読み込めない場合もシステムフォントにフォールバックします。
 

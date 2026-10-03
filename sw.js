@@ -8,7 +8,10 @@
  */
 "use strict";
 
-const CACHE = "bioscanner-v1";
+/* 版を上げると古いキャッシュが activate 時に破棄される。アプリやアイコンを
+   更新したら必ず上げること。上げないと、ホーム画面に追加済みの端末が古い
+   内容を持ち続ける。 */
+const CACHE = "bioscanner-v2";
 
 /* アプリの動作に必要な自前のファイル */
 const SHELL = [
