@@ -642,22 +642,203 @@ body{
 <script>
 "use strict";
 
-/* ══ 解析パラメータ ══════════════════════════════════
-   映像を 48×36 の格子に縮小し、各セルの輝度を時系列バッファに貯める。
-   そこから「動きの強さ」「揺れの周期性」「色の暖かさ」を取り出す。 */
-const AW = 48, AH = 36, NC = AW * AH;   // 解析格子
+/* ══ 解析の核 ══════════════════════════════════════
+   DOM にも映像にも触れない純粋な定義だけをこの区間に置く。
+   tools/verify.mjs がこの区間をそのまま取り出し、合成信号で検証する。
+   区間の印を消したり、外の変数をここから参照したりしないこと。 */
+/* ==CORE:BEGIN== */
 const NBUF = 128;                        // 時系列バッファ長
 const FS = 15;                           // 解析レート(Hz) → 128/15 ≒ 8.5秒分
-const READY_MIN = 48;                    // 暫定判定を出す最小フレーム数(≒3.2秒)
 const SPEC_EVERY = 8;                    // 周波数解析の間隔(tick)
-const CAND = 72;                         // 周波数解析する候補セル数
 const K_LO = 2, K_HI = 26;               // 解析ビン(f = k·FS/NBUF)
 const K_BREATH_HI = 5;                   // 呼吸帯 k=2..5  → 0.23–0.59Hz
 const K_PULSE_LO = 7;                    // 脈拍帯 k=7..26 → 0.82–3.05Hz
 /* 際立ちを律動スコア 0..1 に写す範囲。合成信号での実測分布から決めた:
-   生体(正弦的)は中央値 11–26、非生体(風・水面・ノイズ)は 2–5。
-   この範囲で検出率 87% / 誤検出率 3%。 */
+   生体(正弦的)は中央値 11–26、非生体(風・水面・ノイズ)は 2–5。 */
 const PROM_LO = 7, PROM_HI = 18;
+
+const hann = new Float32Array(NBUF);
+for (let t = 0; t < NBUF; t++) hann[t] = 0.5 - 0.5 * Math.cos(2 * Math.PI * t / (NBUF - 1));
+const mags = new Float32Array(K_HI + 2);  // 補間のため K_LO-1..K_HI+1 まで持つ
+const bgW  = new Float32Array(16);        // 背景中央値を取るための作業領域
+
+const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+
+/* Goertzel法: n点の信号から k番ビンの振幅 */
+function goertzel(s, n, k) {
+  const c = 2 * Math.cos(2 * Math.PI * k / n);
+  let s1 = 0, s2 = 0;
+  for (let i = 0; i < n; i++) { const v = s[i] + c * s1 - s2; s2 = s1; s1 = v; }
+  const m = s1 * s1 + s2 * s2 - c * s1 * s2;
+  return m > 0 ? Math.sqrt(m) : 0;
+}
+
+/* 平均を引いて Hann 窓をかける(その場で書き換える) */
+function detrendWindow(sig) {
+  let mean = 0;
+  for (let t = 0; t < NBUF; t++) mean += sig[t];
+  mean /= NBUF;
+  for (let t = 0; t < NBUF; t++) sig[t] = (sig[t] - mean) * hann[t];
+}
+
+/* 窓をかけた1セルの時系列から、呼吸帯/脈拍帯の最も際立つピークを求める。
+   結果は out に書く: k(ビン) / f(補間した小数ビン) / prom(際立ち) / sd(振幅) /
+   r(律動スコア 0..1)。 */
+function rhythmOf(sig, out) {
+  /* 振幅。Hann窓はRMSを√(3/8)倍にするので戻しておく。 */
+  let e = 0;
+  for (let t = 0; t < NBUF; t++) e += sig[t] * sig[t];
+  const sd = Math.sqrt(e / NBUF) / 0.6124;
+
+  let bB = 0, kB = K_LO, bP = 0, kP = K_PULSE_LO;
+  /* 両端の外側1ビンはピーク位置の補間にだけ使う */
+  mags[K_LO - 1] = goertzel(sig, NBUF, K_LO - 1);
+  mags[K_HI + 1] = goertzel(sig, NBUF, K_HI + 1);
+  for (let k = K_LO; k <= K_HI; k++) {
+    const m = goertzel(sig, NBUF, k);
+    mags[k] = m;
+    if (k <= K_BREATH_HI) { if (m > bB) { bB = m; kB = k; } }
+    else if (k >= K_PULSE_LO) { if (m > bP) { bP = m; kP = k; } }
+  }
+  const isB = bB >= bP;
+  const peakMag = isB ? bB : bP;
+  const kTop = isB ? kB : kP;
+  const f = peakBin(kTop);
+
+  /* 際立ちは「全帯域の平均」ではなく「ピーク周辺の背景」と比べる。
+     全帯域平均と比べると、風に揺れる草木のような低周波ほど強い 1/f 的な
+     信号は、高周波まで含めた平均より必ず大きくなるため、周期性がなくても
+     高得点になってしまう。そこで ±6 ビンの窓から Hann 窓の主ローブ(±2)を
+     除いた背景の中央値を取り、山が地の高さからどれだけ抜きん出ているかを見る。
+     倍音(2f)の山も背景から除く。呼吸は正弦波ではないので必ず倍音を持ち、
+     呼吸帯の上半分(約0.4Hz〜)ではそれがちょうど背景の窓に入る。除かないと
+     背景が倍音で底上げされ、本物の呼吸の際立ちが半分以下に潰れる。
+     除いた分だけ背景が足りなくなったら、窓を外へ広げて4ビン以上を確保する。 */
+  const h2 = 2 * f;
+  let nb = 0;
+  for (let w = 6; w <= 10 && nb < 4; w++) {
+    nb = 0;
+    const kA = Math.max(K_LO, kTop - w), kZ = Math.min(K_HI, kTop + w);
+    for (let k = kA; k <= kZ; k++) {
+      if (k >= kTop - 2 && k <= kTop + 2) continue;
+      if (Math.abs(k - h2) < 1.5) continue;
+      bgW[nb++] = mags[k];
+    }
+  }
+  for (let a = 1; a < nb; a++) {          /* 小さい配列なので挿入ソートで中央値 */
+    const v = bgW[a]; let b = a - 1;
+    while (b >= 0 && bgW[b] > v) { bgW[b + 1] = bgW[b]; b--; }
+    bgW[b + 1] = v;
+  }
+  const bgMed = nb ? bgW[nb >> 1] : 0;
+  const prom = peakMag / (bgMed > 1e-9 ? bgMed : 1e-9);
+
+  out.k = kTop; out.f = f; out.prom = prom; out.sd = sd;
+  /* センサーノイズだけで偶然ピークが立つのを抑える振幅の門。
+     あくまで下限の門であって重みではないので、早く 1.0 に飽和させる。
+     暗所でノイズが増えてもこの門は動かさない。際立ちは山と背景の比なので
+     ノイズが増えれば背景も同じだけ上がり、ノイズだけで際立ちが出ることは
+     ない(tools/verify.mjs の暗所の表で確認できる)。 */
+  const ampGate = clamp01((sd - 0.6) / 1.2);
+  out.r = clamp01((prom - PROM_LO) / (PROM_HI - PROM_LO)) * ampGate;
+}
+
+/* 主ローブの3点からガウス補間で真のピーク位置(小数ビン)を求める。
+   Hann 窓の主ローブは対数を取るとほぼ放物線になるので偏りが小さい。 */
+function peakBin(k) {
+  const a = mags[k - 1], b = mags[k], c = mags[k + 1];
+  if (!(a > 0 && b > 0 && c > 0)) return k;
+  const la = Math.log(a), lb = Math.log(b), lc = Math.log(c);
+  const den = la - 2 * lb + lc;
+  if (den >= 0) return k;                /* 山になっていない */
+  const d = 0.5 * (la - lc) / den;
+  return k + (d < -0.5 ? -0.5 : d > 0.5 ? 0.5 : d);
+}
+
+/* ── 周期の安定度 ─────────────────────────────────
+   周波数解析だけでは、周期的に動く非生物(扇風機・振り子・明滅する光)と
+   呼吸・脈拍を区別できない。違いが出るのは周期の「揺らぎ」で、機械の周期は
+   ほとんど変わらないのに対し、生き物の呼吸数や心拍数は数秒単位で揺らぐ。
+   そこでセルごとにピーク周波数(補間した小数ビン)を時間方向に追い、
+   揺らぎが小さすぎるものを機械的な周期として弱める。
+   揺らぎは周波数に対する比ではなく、ビン単位の絶対量で見る。ピーク位置の
+   推定誤差はビン単位でほぼ一定(約0.02–0.03ビン)なので、比で見ると低い
+   周波数ほど機械の周期が揺らいで見え、ゆっくりした振り子を取り逃がす。
+   バッファ1本分(8.5秒)の窓は大きく重なるので、揺らぎを見るには窓を
+   何本も跨いで観察する必要がある。判定に十数秒かかるのはそのため。 */
+const STAB_A   = 1 / 40;                 // 平均・分散の指数移動の重み(≒21秒)
+const STAB_GAP = 6;                      // これだけ途切れたら観察をやり直す(解析回数)
+const STAB_N0  = 16, STAB_N1 = 12;       // 観察回数がこの範囲で判定を効かせ始める
+const STAB_LO  = 0.035, STAB_HI = 0.06;  // 揺らぎ(ビン)。LO 以下は機械とみなす
+const MECH_DAMP = 0.85;                  // 機械とみなしたときに律動を弱める割合
+
+/* st = { n, m, v, t } … セルごとの観察回数・平均・分散・最後に観察した時刻 */
+function trackFreq(st, i, f, now) {
+  if (now - st.t[i] > STAB_GAP) st.n[i] = 0;
+  st.t[i] = now;
+  const n = ++st.n[i];
+  if (n === 1) { st.m[i] = f; st.v[i] = 0; return; }
+  const a = Math.max(1 / n, STAB_A);
+  const d = f - st.m[i];
+  st.m[i] += a * d;
+  st.v[i] = (1 - a) * (st.v[i] + a * d * d);
+}
+
+/* 機械的な周期らしさ 0..1。観察が足りないうちは 0(= 弱めない) */
+function mechOf(st, i, now) {
+  if (now - st.t[i] > STAB_GAP) return 0;
+  const ready = clamp01((st.n[i] - STAB_N0) / STAB_N1);
+  if (!ready) return 0;
+  const sd = Math.sqrt(st.v[i]);
+  return ready * clamp01((STAB_HI - sd) / (STAB_HI - STAB_LO));
+}
+
+/* 律動スコアを観察できる最小値。これ未満のピークは周期の追跡に使わない */
+const R_TRACK = 0.25;
+
+/* ── 映像のノイズ ─────────────────────────────────
+   暗い場所ではセンサーの増幅が上がり、静止した場面でもフレームごとに輝度が
+   ばらつく。固定のしきい値のままだと、このばらつきが「動き」として数えられ、
+   画面全体の動きのスコアが底上げされるうえ、ほぼ全セルが動いていることに
+   なってカメラの移動と誤判定し、バッファを捨て続けて判定が出なくなる。
+   そこでフレーム間の残差の分布からノイズの大きさを測り、しきい値をそれに
+   合わせて引き上げる。残差は下位30%点で見る。被写体が画面の大半を占めても
+   動いていない部分だけで測れるようにするため。
+   静止した場面では残差 = 2フレームのノイズの差 ~ |N(0, 2σ²)| なので、
+   その30%点は σ·√2·0.385 = 0.545σ になる。 */
+const RES_STEP = 0.1;                    // 残差ヒストグラムの刻み(輝度)
+const MOVE_ON = 0.55, MOVE_OFF = 0.32;   // 動いたセルの割合によるカメラ移動の判定
+
+/* 残差のヒストグラム(RES_STEP 刻み・256段)からノイズの標準偏差を推定する */
+function noiseOfRes(hist, n) {
+  const target = n * 0.3;
+  let acc = 0;
+  for (let q = 0; q < 256; q++) {
+    acc += hist[q];
+    if (acc >= target) return (q + 0.5) * RES_STEP / 0.545;
+  }
+  return 255.5 * RES_STEP / 0.545;
+}
+/* 「動いた」とみなす残差。明るい場面では従来どおり 2.5 で、ノイズが
+   大きくなるとノイズだけでは 1% 程度しか超えない水準(≒2.5σ√2)に上がる。 */
+function moveThr(noiseSd) { return Math.max(2.5, 3.5 * noiseSd); }
+/* 動きのスコアの床。ノイズだけの残差の指数平均は平均 1.13σ・ばらつき約 0.27σ。
+   床をその少し上に置き、ノイズだけのセルがほぼ 0 になるようにする。
+   高くしすぎると弱く動く被写体まで削れるので、検証で両者の釣り合う 1.3σ とした。 */
+const MOTION_FLOOR_K = 1.3;
+function motionFloor(noiseSd) { return Math.max(0.4, MOTION_FLOOR_K * noiseSd); }
+function motionNorm(m, floor) {
+  const v = (m - floor) / 7;
+  return v <= 0 ? 0 : Math.pow(v > 1 ? 1 : v, 0.75);
+}
+/* ==CORE:END== */
+
+/* ══ 解析パラメータ ══════════════════════════════════
+   映像を 48×36 の格子に縮小し、各セルの輝度を時系列バッファに貯める。
+   そこから「動きの強さ」「揺れの周期性」「色の暖かさ」を取り出す。 */
+const AW = 48, AH = 36, NC = AW * AH;   // 解析格子
+const READY_MIN = 48;                    // 暫定判定を出す最小フレーム数(≒3.2秒)
+const CAND = 72;                         // 周波数解析する候補セル数
 
 const ring   = new Float32Array(NC * NBUF);
 const prevY  = new Float32Array(NC);
@@ -688,9 +869,7 @@ let nBasis = 0;
 const candI = new Int32Array(CAND);
 const candK = new Int32Array(CAND);
 const candR = new Float32Array(CAND);
-const hann   = new Float32Array(NBUF);
-const mags   = new Float32Array(K_HI + 1);
-const bg     = new Float32Array(16);     // 背景中央値を取るための作業領域
+const pk = { k: 0, prom: 0, sd: 0, r: 0 };   // rhythmOf の結果
 const bins     = new Int32Array(256);   // 候補の閾値を求めるヒストグラム
 const candList = new Int32Array(NC);    // 候補セル
 const bgList   = new Int32Array(NC);    // それ以外(背景の明るさを作るのに使う)
@@ -699,12 +878,17 @@ const bgList   = new Int32Array(NC);    // それ以外(背景の明るさを作
    ときに呼吸そのものが消えてしまう。 */
 const candMask = new Uint8Array(NC);
 const blobId = new Int32Array(NC);
+/* 周期の安定度の追跡(trackFreq / mechOf が使う) */
+const fst = { n: new Float32Array(NC), m: new Float32Array(NC), v: new Float32Array(NC), t: new Float32Array(NC) };
+let specRun = 0;                         // 周波数解析を行った回数(fst の時刻)
+const resHist = new Int32Array(256);     // フレーム間残差のヒストグラム
 const stack  = new Int32Array(NC);
-for (let t = 0; t < NBUF; t++) hann[t] = 0.5 - 0.5 * Math.cos(2 * Math.PI * t / (NBUF - 1));
 
 let head = 0, filled = 0, tick = 0, havePrev = false;
 let gmEma = 0, moving = false;
 let shiftEma = 0;                        // 全体並進の大きさ(セル/フレーム)
+let noiseSd = 0;                         // 映像のノイズの標準偏差(輝度)
+let lumaEma = 128;                       // 画面の平均輝度
 let accX = 0, accY = 0;                  // 累積変位。手ぶれ補償の基準位置
 let running = false, rafId = 0, lastTick = 0;
 let facing = "environment", track = null, torchOn = false;
@@ -750,8 +934,6 @@ const hcan = document.createElement("canvas");
 hcan.width = AW; hcan.height = AH;
 const hctx = hcan.getContext("2d");
 const himg = hctx.createImageData(AW, AH);
-
-const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 
 /* ══ カメラ ══════════════════════════════════════ */
 async function start() {
@@ -830,6 +1012,8 @@ function reset() {
   curY.fill(0); gradX.fill(0); gradY.fill(0);
   head = 0; filled = 0; tick = 0; gmEma = 0; moving = false;
   havePrev = false; shiftEma = 0; accX = 0; accY = 0;
+  noiseSd = 0; lumaEma = 128;
+  fst.n.fill(0); fst.t.fill(-1e9); specRun = 0;
   bgLevel.fill(0); candMask.fill(0); nBasis = 0;
   verdictEma = 0; blobs = []; topBpm = 0; topBand = ""; peak = 0;
   mMotion = mRhythm = mWarm = 0;
@@ -889,11 +1073,13 @@ function analyze() {
   let data;
   try { data = actx.getImageData(0, 0, AW, AH).data; } catch { return; }
 
+  let ySum = 0;
   for (let i = 0; i < NC; i++) {
     const p = i << 2;
     const r = data[p], g = data[p + 1], b = data[p + 2];
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
     curY[i] = y;
+    ySum += y;
 
     /* 暖色らしさ: 色相が橙〜肌色帯にあり、彩度があり、白飛び/黒潰れでない */
     const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
@@ -910,6 +1096,7 @@ function analyze() {
     }
     warm[i] += (w - warm[i]) * 0.08;
   }
+  lumaEma += (ySum / NC - lumaEma) * 0.1;
 
   /* ── 手ぶれ補償 ──────────────────────────────────
      手持ちでは常に微細な並進が乗る。これをそのまま動きとして数えると、
@@ -963,17 +1150,27 @@ function analyze() {
   if (accY > 3) accY = 3; else if (accY < -3) accY = -3;
 
   let nMove = 0;
+  const thrMove = moveThr(noiseSd);
+  resHist.fill(0);
   for (let y = 0, i = 0; y < AH; y++) {
     for (let x = 0; x < AW; x++, i++) {
       /* ずれた位置から双線形補間で取り直す。勾配による一次近似だと誤差が
          変位の二乗で増え、0.3セル/フレーム程度のぶれで検出できなくなる。 */
       const res = havePrev ? Math.abs(sampleAt(curY, x + dx, y + dy) - prevY[i]) : 0;
-      if (res > 2.5) nMove++;
+      if (res > thrMove) nMove++;
+      resHist[res >= 25.5 ? 255 : (res / RES_STEP) | 0]++;
       motion[i] += (res - motion[i]) * 0.18;
       /* 時系列は走査開始時点の位置に揃えて積む。揃えないとぶれ由来の
          輝度変動が律動解析に広帯域ノイズとして乗り、呼吸が埋もれる。 */
       ring[i * NBUF + head] = sampleAt(curY, x + accX, y + accY);
     }
+  }
+
+  /* ノイズはカメラがほぼ静止しているフレームでだけ測る。並進が大きいと
+     補間の誤差が残差に乗ってノイズを大きく見積もるため。 */
+  if (havePrev && Math.hypot(dx, dy) < 0.3) {
+    const est = noiseOfRes(resHist, NC);
+    noiseSd += (est - noiseSd) * (noiseSd ? 0.05 : 1);
   }
 
   prevY.set(curY);
@@ -989,10 +1186,11 @@ function analyze() {
      移動と誤判定してしまうため。 */
   shiftEma += (Math.hypot(dx, dy) - shiftEma) * 0.35;
   gmEma += (nMove / NC - gmEma) * 0.3;
-  if (!moving && (shiftEma > 0.55 || gmEma > 0.55)) moving = true;
-  else if (moving && shiftEma < 0.28 && gmEma < 0.32) moving = false;
+  if (!moving && (shiftEma > 0.55 || gmEma > MOVE_ON)) moving = true;
+  else if (moving && shiftEma < 0.28 && gmEma < MOVE_OFF) moving = false;
 
-  if (moving) { filled = 0; accX = 0; accY = 0; }
+  /* 映っている場面が変わるので、周期の観察もやり直す */
+  if (moving) { filled = 0; accX = 0; accY = 0; fst.n.fill(0); }
   else if (shiftEma > 0.22) filled = Math.max(0, filled - 4);   /* 軽いぶれは少し巻き戻すだけ */
 }
 
@@ -1042,15 +1240,6 @@ function sampleAt(arr, fx, fy) {
   return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
 }
 
-/* Goertzel法: n点の信号から k番ビンの振幅 */
-function goertzel(s, n, k) {
-  const c = 2 * Math.cos(2 * Math.PI * k / n);
-  let s1 = 0, s2 = 0;
-  for (let i = 0; i < n; i++) { const v = s[i] + c * s1 - s2; s2 = s1; s1 = v; }
-  const m = s1 * s1 + s2 * s2 - c * s1 * s2;
-  return m > 0 ? Math.sqrt(m) : 0;
-}
-
 /* 外乱の時系列を直交正規化した基底に整える。
    各セルからこの基底方向の成分を引けば、カメラ変位の一次関数で表せる
    手ぶれ残差と、全体の明るさの揺れ(自動露出)が同時に落ちる。
@@ -1088,6 +1277,7 @@ function spectral() {
   for (let i = 0; i < NC; i++) rhythm[i] *= 0.55;
   topBpm = 0; topBand = "";
   if (filled < NBUF || moving) return;
+  specRun++;
 
   /* 動きの強いセルを候補に選ぶ(静止して呼吸するだけの対象も微小な動きで
      上位に来る)。全体を並べ替えると 1728 要素のソートと配列確保が毎回
@@ -1119,10 +1309,8 @@ function spectral() {
   for (let c = 0; c < nCand; c++) {
     const i = candList[c];
     const base = i * NBUF;
-    let mean = 0;
-    for (let t = 0; t < NBUF; t++) { const v = ring[base + (head + t) % NBUF]; sig[t] = v; mean += v; }
-    mean /= NBUF;
-    for (let t = 0; t < NBUF; t++) sig[t] = (sig[t] - mean) * hann[t];
+    for (let t = 0; t < NBUF; t++) sig[t] = ring[base + (head + t) % NBUF];
+    detrendWindow(sig);
 
     /* 外乱で説明できる成分を除去。基底は直交正規化済みなので内積を引くだけ */
     for (let k = 0; k < nBasis; k++) {
@@ -1132,43 +1320,13 @@ function spectral() {
       for (let t = 0; t < NBUF; t++) sig[t] -= dot * B[t];
     }
 
-    /* 振幅は除去後に測る。Hann窓はRMSを√(3/8)倍にするので戻しておく。 */
-    let e = 0;
-    for (let t = 0; t < NBUF; t++) e += sig[t] * sig[t];
-    const sd = Math.sqrt(e / NBUF) / 0.6124;
+    rhythmOf(sig, pk);
 
-    let bB = 0, kB = K_LO, bP = 0, kP = K_PULSE_LO;
-    for (let k = K_LO; k <= K_HI; k++) {
-      const m = goertzel(sig, NBUF, k);
-      mags[k] = m;
-      if (k <= K_BREATH_HI) { if (m > bB) { bB = m; kB = k; } }
-      else if (k >= K_PULSE_LO) { if (m > bP) { bP = m; kP = k; } }
-    }
-    const isB = bB >= bP;
-    const peakMag = isB ? bB : bP;
-    const kTop = isB ? kB : kP;
-
-    /* 際立ちは「全帯域の平均」ではなく「ピーク周辺の背景」と比べる。
-       全帯域平均と比べると、風に揺れる草木のような低周波ほど強い 1/f 的な
-       信号は、高周波まで含めた平均より必ず大きくなるため、周期性がなくても
-       高得点になってしまう。そこで ±6 ビンの窓から Hann 窓の主ローブ(±2)を
-       除いた背景の中央値を取り、山が地の高さからどれだけ抜きん出ているかを見る。 */
-    let nb = 0;
-    const kA = Math.max(K_LO, kTop - 6), kZ = Math.min(K_HI, kTop + 6);
-    for (let k = kA; k <= kZ; k++) if (k < kTop - 2 || k > kTop + 2) bg[nb++] = mags[k];
-    for (let a = 1; a < nb; a++) {          /* 小さい配列なので挿入ソートで中央値 */
-      const v = bg[a]; let b = a - 1;
-      while (b >= 0 && bg[b] > v) { bg[b + 1] = bg[b]; b--; }
-      bg[b + 1] = v;
-    }
-    const bgMed = nb ? bg[nb >> 1] : 0;
-    const prom = peakMag / (bgMed > 1e-9 ? bgMed : 1e-9);
-
-    /* センサーノイズだけで偶然ピークが立つのを抑える振幅の門。
-       あくまで下限の門であって重みではないので、早く 1.0 に飽和させる。 */
-    const ampGate = clamp01((sd - 0.6) / 1.2);
-    const r = clamp01((prom - PROM_LO) / (PROM_HI - PROM_LO)) * ampGate;
-    candI[c] = i; candK[c] = kTop; candR[c] = r;
+    /* 周期が一定すぎるものは機械的な周期として弱める */
+    let r = pk.r;
+    if (r >= R_TRACK) trackFreq(fst, i, pk.f, specRun);
+    r *= 1 - MECH_DAMP * mechOf(fst, i, specRun);
+    candI[c] = i; candK[c] = pk.k; candR[c] = r;
   }
 
   /* ── 画面全体に散った周期を落とす ──────────────────────
@@ -1211,8 +1369,9 @@ function spectral() {
 
 /* 3成分を合成 → 空間平滑化 → 連結成分(ブロブ)抽出 */
 function fuse() {
+  const mFloor = motionFloor(noiseSd);
   for (let i = 0; i < NC; i++) {
-    const mN = Math.pow(clamp01((motion[i] - 0.4) / 7), 0.75);
+    const mN = motionNorm(motion[i], mFloor);
     score[i] = 0.40 * mN + 0.40 * rhythm[i] + 0.20 * warm[i];
   }
 
@@ -1285,7 +1444,7 @@ function fuse() {
       for (let x = b.x0; x <= b.x1; x++) {
         const i = y * AW + x;
         if (blobId[i] !== b.id) continue;   /* 外接矩形に混じる別ブロブを除く */
-        sm += Math.pow(clamp01((motion[i] - 0.4) / 7), 0.75);
+        sm += motionNorm(motion[i], mFloor);
         sr += rhythm[i]; sw += warm[i]; n++;
       }
     }
@@ -1483,9 +1642,12 @@ function updateDeck() {
               : filled < NBUF ? "part" : "full";
 
   const shaky = shiftEma > 0.22;
+  /* 暗所: ノイズに合わせてしきい値を上げているので、弱い動きは拾えなくなる */
+  const dark = noiseSd > 1.5 || lumaEma < 30;
   if (phase === "move")      setState("hold", "移動中 — 静止してください");
   else if (phase === "acq")  setState("hold", "基準取得 " + Math.round(filled / READY_MIN * 100) + "%");
   else if (shaky)            setState("hold", "手ぶれ補正中 — 感度が下がります");
+  else if (dark)             setState("hold", $("btnTorch").hidden || torchOn ? "暗所 — 感度が下がります" : "暗所 — ☀ ライトで改善");
   else if (phase === "part") setState("live", "走査中 — 律動解析まで " + ((NBUF - filled) / FS).toFixed(1) + "秒");
   else                       setState("live", "走査中 — 全帯域");
 
