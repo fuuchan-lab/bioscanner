@@ -143,6 +143,8 @@ body{
   object-fit:contain;
   background:#05090A;
 }
+/* 前面カメラは鏡像で見せる。重畳は解析側で反転済みなので映像だけ反転する */
+.scope.mirror #video{transform:scaleX(-1)}
 #overlay{
   position:absolute; inset:0;
   width:100%; height:100%;
@@ -642,7 +644,11 @@ body{
 
     <div class="veil" id="veil">
       <h1 id="veilTitle">かざした範囲の生体反応を探す</h1>
-      <p id="veilText">背面カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。</p>
+      <p id="veilText">カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。</p>
+      <div class="seg" id="segCam" role="group" aria-label="使うカメラ">
+        <button type="button" data-v="environment" aria-pressed="true">背面カメラ</button>
+        <button type="button" data-v="user" aria-pressed="false">前面カメラ</button>
+      </div>
       <button class="start" id="btnStart">カメラを起動</button>
     </div>
   </main>
@@ -1041,6 +1047,9 @@ let lumaEma = 128;                       // 画面の平均輝度
 let accX = 0, accY = 0;                  // 累積変位。手ぶれ補償の基準位置
 let running = false, rafId = 0, lastTick = 0;
 let facing = "environment", track = null, torchOn = false;
+try { if (localStorage.getItem("bioscanner.facing") === "user") facing = "user"; } catch {}
+let frontCam = false;                    // 実際に開いたのが前面カメラか(鏡像表示する)
+let startSeq = 0;                        // カメラ起動の世代。連打で古い起動を捨てる
 let showHeat = true;
 let heatDirty = true;                    // 熱マップを作り直す必要があるか
 let overlayDirty = true;                 // 重畳を描き直す必要があるか
@@ -1093,15 +1102,17 @@ async function start() {
   if (!navigator.mediaDevices?.getUserMedia) {
     return fail("カメラを利用できません", "このブラウザはカメラ取得に対応していません。Safari または Chrome の最新版でお試しください。");
   }
+  const my = ++startSeq;
+  /* 切り替えのときは、先に今のカメラを閉じる。多くの Android 端末は
+     2台のカメラを同時に開けず、開いたまま次を要求すると失敗する。 */
+  stop(false);
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false
-    });
-    stop(false);
+    const stream = await openCamera();
+    if (my !== startSeq) { stream.getTracks().forEach((t) => t.stop()); return; }   /* 連打で追い越された */
     video.srcObject = stream;
     await video.play().catch(() => {});
     track = stream.getVideoTracks()[0] || null;
+    applyFacing();
     setupTorch();
     requestWakeLock();
     veil.hidden = true;
@@ -1110,6 +1121,7 @@ async function start() {
     lastTick = 0;
     rafId = requestAnimationFrame(loop);
   } catch (e) {
+    if (my !== startSeq) return;
     const n = e && e.name;
     if (n === "NotAllowedError" || n === "SecurityError")
       fail("カメラの許可が必要です", "ブラウザのアドレスバーのカメラ設定から、このページにカメラの使用を許可してください。許可後にもう一度起動します。");
@@ -1120,6 +1132,42 @@ async function start() {
     else
       fail("カメラを起動できませんでした", "もう一度お試しください。" + (n ? "(" + n + ")" : ""));
   }
+}
+
+/* 指定した向きのカメラを開く。まず向きを必須条件として要求し、その向きの
+   カメラが無い端末(パソコンなど)では希望条件に緩めて開けるカメラを使う。 */
+async function openCamera() {
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+  try {
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: facing }, ...size }, audio: false });
+  } catch (e) {
+    const n = e && e.name;
+    if (n !== "OverconstrainedError" && n !== "NotFoundError" && n !== "ConstraintNotSatisfiedError") throw e;
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, ...size }, audio: false });
+  }
+}
+
+/* 実際に開いたカメラの向きで、鏡像表示と傾きの式を決める。
+   前面カメラは鏡のように左右反転して見せないと、手の動きと映像が逆になる。
+   反転は解析の段階で行う(格子そのものを反転させる)ので、重畳の枠や文字は
+   そのまま描けばよい。CSS で重畳ごと反転すると文字まで裏返ってしまう。 */
+function applyFacing() {
+  let f = "";
+  try { f = (track && track.getSettings && track.getSettings().facingMode) || ""; } catch {}
+  frontCam = f ? f === "user" : facing === "user";
+  scope.classList.toggle("mirror", frontCam);
+  if (f === "user" || f === "environment") setFacingUI(f);
+  heatDirty = true; overlayDirty = true;
+}
+
+function setFacingUI(f) {
+  facing = f;
+  try { localStorage.setItem("bioscanner.facing", f); } catch {}
+  for (const el of $("segCam").querySelectorAll("button"))
+    el.setAttribute("aria-pressed", String(el.dataset.v === f));
+  const t = f === "user" ? "前面カメラ使用中(背面へ切替)" : "背面カメラ使用中(前面へ切替)";
+  $("btnFlip").title = t;
+  $("btnFlip").setAttribute("aria-label", t);
 }
 
 function fail(title, text) {
@@ -1147,7 +1195,7 @@ function stop(showVeil = true) {
     veil.hidden = false;
     veilTitle.textContent = "かざした範囲の生体反応を探す";
     veilText.className = "";
-    veilText.innerHTML = "背面カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。";
+    veilText.innerHTML = "カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。";
     setState("off", "待機");
     blobs = [];
     octx.clearRect(0, 0, overlay.width, overlay.height);
@@ -1221,7 +1269,11 @@ function loop(ts) {
 
 /* 1フレーム: 輝度・動き・色の暖かさ */
 function analyze() {
-  actx.drawImage(video, 0, 0, AW, AH);
+  if (frontCam) {
+    actx.setTransform(-1, 0, 0, 1, AW, 0);
+    actx.drawImage(video, 0, 0, AW, AH);
+    actx.setTransform(1, 0, 0, 1, 0, 0);
+  } else actx.drawImage(video, 0, 0, AW, AH);
   let data;
   try { data = actx.getImageData(0, 0, AW, AH).data; } catch { return; }
 
@@ -1362,14 +1414,15 @@ function spanLength(f0, f1, tanHalf, d) {
   return d * 2 * tanHalf * (f1 - f0);
 }
 
-/* 端末の傾きから、背面カメラの光軸が水平から何ラジアン下を向いているか。
+/* 端末の傾きから、カメラの光軸が水平から何ラジアン下を向いているか。
    端末座標の -z 軸(背面カメラの向き)の世界座標での鉛直成分が
-   -cos(beta)cos(gamma) になることから導かれる。縦持ち・横持ちに依らない。 */
-function cameraDepression(betaDeg, gammaDeg) {
+   -cos(beta)cos(gamma) になることから導かれる。縦持ち・横持ちに依らない。
+   前面カメラは +z 軸を向くので符号が逆になる。 */
+function cameraDepression(betaDeg, gammaDeg, front = false) {
   const b = betaDeg * Math.PI / 180, g = gammaDeg * Math.PI / 180;
   let s = Math.cos(b) * Math.cos(g);
   if (s > 1) s = 1; else if (s < -1) s = -1;
-  return Math.asin(s);
+  return front ? -Math.asin(s) : Math.asin(s);
 }
 
 /* 平らな地面に立つ対象までの水平距離。
@@ -2061,7 +2114,8 @@ function drawSnapshot(meta, cv) {
   const strip = Math.round(58 * s);
   cv.width = w; cv.height = h + strip;
   const c = cv.getContext("2d");
-  c.drawImage(video, 0, 0, w, h);
+  if (frontCam) { c.setTransform(-1, 0, 0, 1, w, 0); c.drawImage(video, 0, 0, w, h); c.setTransform(1, 0, 0, 1, 0, 0); }
+  else c.drawImage(video, 0, 0, w, h);
   if (!moving && filled >= READY_MIN) drawMarks(c, { x: 0, y: 0, w, h }, s, showHeat);
 
   c.fillStyle = "#080D0E";
@@ -2296,9 +2350,15 @@ setAuto(autoLog);
 refreshCount();
 
 $("btnFlip").addEventListener("click", () => {
-  facing = facing === "environment" ? "user" : "environment";
+  setFacingUI(facing === "environment" ? "user" : "environment");
   if (running) start();
+  else toast(facing === "user" ? "前面カメラで起動します" : "背面カメラで起動します");
 });
+$("segCam").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-v]");
+  if (b) setFacingUI(b.dataset.v);
+});
+setFacingUI(facing);
 
 $("btnHeat").addEventListener("click", (e) => {
   showHeat = !showHeat;
@@ -2359,7 +2419,7 @@ bindRange("rFov", "nFov", (v) => Math.round(v) + "°", (v) => { fovH = v; });
 
 function onOrient(e) {
   if (e.beta == null || e.gamma == null) return;
-  tiltPhi = cameraDepression(e.beta, e.gamma);
+  tiltPhi = cameraDepression(e.beta, e.gamma, frontCam);
   tiltRoll = Math.abs(e.gamma);
   const a = (screen.orientation && screen.orientation.angle) || 0;
   tiltPortrait = a === 0 || a === 180;
