@@ -60,6 +60,9 @@ body{
   height:100dvh;
   display:grid;
   grid-template-rows:auto minmax(0,1fr) auto;
+  /* 列を画面幅に縛る。縛らないと状態表示などの折り返さない文字が
+     画面ごと横に押し広げ、右端のボタンや計器が切れる。 */
+  grid-template-columns:minmax(0,1fr);
   gap:0;
   overflow:hidden;
 }
@@ -89,11 +92,14 @@ body{
 
 .state{
   display:flex; align-items:center; gap:6px;
+  min-width:0;
   font-family:var(--f-lab);
   font-size:12px; letter-spacing:.1em;
   color:var(--ink-2);
   white-space:nowrap;
 }
+#stateText{overflow:hidden;text-overflow:ellipsis}
+@media (max-width:440px){ .mark .en,.meter .m-lab .en{display:none} }
 .dot{
   width:7px;height:7px;border-radius:50%;
   background:var(--ink-3);
@@ -261,14 +267,15 @@ body{
 }
 
 /* メーター(単色・琥珀) */
-.meters{display:grid;gap:7px;align-content:start}
-.meter{display:grid;grid-template-columns:1fr auto;gap:2px var(--s2);align-items:center}
+.meters{display:grid;gap:7px;align-content:start;min-width:0}
+.meter{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px var(--s2);align-items:center}
 .meter .m-lab{
   grid-column:1;
   display:flex; align-items:baseline; gap:6px;
   font-size:11px;
   color:var(--ink-2);
   white-space:nowrap;
+  overflow:hidden;
 }
 .meter .m-lab .en{
   font-family:var(--f-lab);
@@ -481,6 +488,113 @@ body{
 .f-note.warn{color:var(--amber-2)}
 .s-panel .seg button{font-size:11px;padding:6px 10px}
 
+/* ── 記録 ───────────────────────────────────── */
+.count{
+  font-family:var(--f-num);
+  font-size:11px;
+  color:var(--ink-3);
+  margin-left:4px;
+}
+.toast{
+  position:absolute; left:50%; bottom:14px;
+  transform:translateX(-50%);
+  background:rgba(8,13,14,.92);
+  border:1px solid var(--amber-3);
+  color:var(--ink);
+  font-size:12px;
+  padding:6px 12px;
+  border-radius:7px;
+  pointer-events:none;
+  white-space:nowrap;
+}
+.toast[hidden]{display:none}
+
+.log{
+  width:min(720px,100vw);
+  max-width:100vw;
+  height:min(100dvh,900px);
+  max-height:100dvh;
+  margin:auto;
+  padding:0;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--panel);
+  color:var(--ink);
+}
+.log::backdrop{background:rgba(3,6,7,.72)}
+.log[open]{display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+.log-head{
+  display:flex; align-items:center; gap:var(--s3);
+  padding:var(--s3) var(--s4);
+  border-bottom:1px solid var(--line);
+  flex-wrap:wrap;
+}
+.log-head h2{margin:0;font-size:15px;font-weight:700;letter-spacing:.04em}
+.log-body{overflow-y:auto;padding:var(--s3) var(--s4);overscroll-behavior:contain}
+.log-foot{
+  display:flex; align-items:center; gap:var(--s3);
+  padding:var(--s3) var(--s4) calc(var(--s3) + env(safe-area-inset-bottom,0px));
+  border-top:1px solid var(--line);
+  flex-wrap:wrap;
+}
+.log-note{font-size:11px;color:var(--ink-3);line-height:1.6;flex:1 1 220px}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:var(--s3);
+}
+.grid[hidden],.log-note[hidden]{display:none}
+.rec{
+  appearance:none;
+  display:grid; gap:4px;
+  padding:0;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:8px;
+  overflow:hidden;
+  color:var(--ink);
+  text-align:left;
+  cursor:pointer;
+  font:inherit;
+}
+.rec:hover{border-color:var(--ink-3)}
+.rec img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:#05090A}
+.rec .r-cap{display:grid;padding:2px 8px 7px;gap:1px}
+.rec .r-v{font-family:var(--f-num);font-weight:600;font-size:15px;font-variant-numeric:tabular-nums}
+.rec .r-t{font-family:var(--f-num);font-size:10px;color:var(--ink-3)}
+.rec[data-lv="3"] .r-v{color:var(--amber)}
+.rec[data-lv="4"] .r-v{color:var(--ember)}
+.rec[data-lv="2"] .r-v{color:var(--amber-2)}
+.rec[data-lv="1"] .r-v{color:var(--cyan)}
+.empty{color:var(--ink-3);font-size:13px;text-align:center;padding:40px 0}
+.detail{display:grid;gap:var(--s3)}
+.detail[hidden]{display:none}
+.detail img{width:100%;height:auto;border-radius:8px;background:#05090A}
+.detail dl{
+  margin:0;
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:4px var(--s3);
+  font-size:12px;
+}
+.detail dt{color:var(--ink-3)}
+.detail dd{margin:0;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.btn{
+  appearance:none;
+  background:var(--panel-2);
+  border:1px solid var(--line-2);
+  color:var(--ink);
+  border-radius:7px;
+  font-family:var(--f-ui);
+  font-size:12px;
+  padding:7px 14px;
+  cursor:pointer;
+}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--amber);color:#120D04;border-color:var(--amber);font-weight:700}
+.btn.danger{color:var(--ember);border-color:#5A2418}
+.btn[hidden]{display:none}
+
 :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 
 @media (prefers-reduced-motion:reduce){
@@ -524,6 +638,7 @@ body{
     <video id="video" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
     <div class="sweep" id="sweep" hidden></div>
+    <div class="toast" id="toast" role="status" hidden></div>
 
     <div class="veil" id="veil">
       <h1 id="veilTitle">かざした範囲の生体反応を探す</h1>
@@ -617,6 +732,8 @@ body{
       </div>
       <div class="ctrl-spacer"></div>
       <div class="seg">
+        <button type="button" id="btnSnap" title="いまの画面を記録">記録</button>
+        <button type="button" id="btnLog" title="記録の一覧">一覧<span class="count" id="logCount"></span></button>
         <button type="button" id="btnStop">停止</button>
       </div>
     </div>
@@ -630,14 +747,46 @@ body{
           <li><strong>律動</strong> — その明るさの揺れが呼吸帯(約14〜35回/分)や脈拍帯(約49〜183回/分)の周期を持つかを周波数解析で判定。ピークを全帯域の平均ではなく<strong>ピーク周辺の背景</strong>と比べることで、風や水面のような広帯域の揺れを退けます。</li>
           <li><strong>温感</strong> — 色相と彩度から肌・毛色らしさを<strong>推定</strong>したもの。温度ではありません。</li>
         </ul>
-        <p class="warn"><strong>周期的に動く非生物は区別できません。</strong>振り子状に揺れる枝、扇風機、一定周期で明滅する光は、本物の呼吸・脈拍と同じ強さで検出されます。周期的に動くものが生物かどうかは周波数解析だけでは決められないためで、手法そのものの限界です。</p>
+        <p class="warn"><strong>周期的に動く非生物は完全には区別できません。</strong>扇風機・振り子・明滅する光のように周期が一定なものは、十数秒観察すると弱められますが、それまでの間は本物の呼吸・脈拍と同じ強さで検出されます。</p>
         <p class="warn">結果は生体の存在を確証するものではありません。人命・安全・医療の判断には使用しないでください。</p>
-        <p>映像はすべて端末内で処理され、どこにも送信・保存されません。</p>
+        <p><strong>一定周期の除外</strong> — 機械の周期はほとんど揺らがないのに対し、呼吸数や心拍数は数秒単位で揺らぎます。同じ場所の周期を十数秒観察し、揺らぎが小さすぎるものは機械的な周期として弱めます。ただし風に揺れる枝のように不規則に揺れるものは生体と区別できず、とても規則正しく呼吸する個体は弱められることがあります。</p>
+        <p><strong>暗所</strong> — 映像のノイズの大きさを測り、ノイズで動きを誤検出しないようしきい値を自動で上げます。その分、弱い動きは拾えなくなります。</p>
+        <p>映像はすべて端末内で処理され、外部へは送信されません。<strong>記録</strong>した静止画は、この端末のブラウザ内にだけ保存されます(一覧から削除できます)。</p>
       </div>
     </details>
 
   </footer>
 </div>
+
+<dialog class="log" id="logDlg" aria-labelledby="logTitle">
+  <div class="log-head">
+    <h2 id="logTitle">検出の記録</h2>
+    <div class="rail-spacer"></div>
+    <div class="sens">
+      <span>自動記録</span>
+      <div class="seg" id="segAuto" role="group" aria-label="自動記録">
+        <button type="button" data-v="1" aria-pressed="true">入</button>
+        <button type="button" data-v="0" aria-pressed="false">切</button>
+      </div>
+    </div>
+    <button type="button" class="icon-btn" id="btnLogClose" aria-label="閉じる">✕</button>
+  </div>
+  <div class="log-body">
+    <div class="grid" id="logGrid"></div>
+    <p class="empty" id="logEmpty" hidden>記録はまだありません。<br>「生体の可能性」以上の反応が出ると自動で記録されます。</p>
+    <div class="detail" id="logDetail" hidden>
+      <img id="dImg" alt="記録した画面">
+      <dl id="dMeta"></dl>
+    </div>
+  </div>
+  <div class="log-foot">
+    <p class="log-note" id="logNote">記録はこの端末のブラウザ内にだけ保存されます。最大 200 件で、古いものから消えます。</p>
+    <button type="button" class="btn" id="btnBack" hidden>一覧へ戻る</button>
+    <button type="button" class="btn danger" id="btnDel" hidden>削除</button>
+    <button type="button" class="btn primary" id="btnSave" hidden>保存・共有</button>
+    <button type="button" class="btn danger" id="btnClear">すべて削除</button>
+  </div>
+</dialog>
 
 <script>
 "use strict";
@@ -908,6 +1057,7 @@ let camHeight = 1.4;                     // m
 let tiltOn = false, tiltPhi = 0, tiltRoll = 0, tiltPortrait = true;
 let szOk = false, szW = 0, szH = 0, szD = 0, szAW = 0, szAH = 0, szCell = 0;
 let mMotion = 0, mRhythm = 0, mWarm = 0, topBpm = 0, topBand = "";
+let mechNote = 0;                        // 機械的な周期として弱めた律動の強さ(表示用)
 let blobs = [];
 
 /* トレース: 3Hz × 180 = 直近60秒 */
@@ -982,6 +1132,7 @@ function fail(title, text) {
 }
 
 function stop(showVeil = true) {
+  flushAuto();
   running = false;
   if (rafId) cancelAnimationFrame(rafId), rafId = 0;
   const s = video.srcObject;
@@ -1015,7 +1166,7 @@ function reset() {
   noiseSd = 0; lumaEma = 128;
   fst.n.fill(0); fst.t.fill(-1e9); specRun = 0;
   bgLevel.fill(0); candMask.fill(0); nBasis = 0;
-  verdictEma = 0; blobs = []; topBpm = 0; topBand = ""; peak = 0;
+  verdictEma = 0; blobs = []; topBpm = 0; topBand = ""; peak = 0; mechNote = 0;
   mMotion = mRhythm = mWarm = 0;
   traceBuf.fill(-1); traceHead = 0;
 }
@@ -1065,6 +1216,7 @@ function loop(ts) {
   overlayDirty = true;
   render();
   updateDeck();
+  autoStep(ts);
 }
 
 /* 1フレーム: 輝度・動き・色の暖かさ */
@@ -1275,7 +1427,7 @@ function prepBasis(bg, nBg) {
 /* 候補セルの時系列を周波数解析し、呼吸帯/脈拍帯のピークの際立ちを律動スコアに */
 function spectral() {
   for (let i = 0; i < NC; i++) rhythm[i] *= 0.55;
-  topBpm = 0; topBand = "";
+  topBpm = 0; topBand = ""; mechNote = 0;
   if (filled < NBUF || moving) return;
   specRun++;
 
@@ -1325,7 +1477,9 @@ function spectral() {
     /* 周期が一定すぎるものは機械的な周期として弱める */
     let r = pk.r;
     if (r >= R_TRACK) trackFreq(fst, i, pk.f, specRun);
-    r *= 1 - MECH_DAMP * mechOf(fst, i, specRun);
+    const mech = mechOf(fst, i, specRun);
+    if (r * mech > mechNote) mechNote = r * mech;
+    r *= 1 - MECH_DAMP * mech;
     candI[c] = i; candK[c] = pk.k; candR[c] = r;
   }
 
@@ -1543,6 +1697,74 @@ function sizeCanvases() {
   drawSpark();
 }
 
+/* 熱マップの中身は解析のたび(15Hz)にしか変わらない。描画のたびに
+   作り直す必要はないので、変わった時だけ作る。 */
+function updateHeat() {
+  if (!heatDirty) return;
+  const px = himg.data;
+  for (let i = 0; i < NC; i++) {
+    const v = (smooth[i] - 0.14) * 335.5;        /* = /0.76*255 */
+    const q = v < 0 ? 0 : v > 255 ? 255 : v | 0;
+    const o = i << 2, m = q << 2;
+    px[o] = RAMP[m]; px[o + 1] = RAMP[m + 1]; px[o + 2] = RAMP[m + 2]; px[o + 3] = RAMP[m + 3];
+  }
+  hctx.putImageData(himg, 0, 0);
+  heatDirty = false;
+}
+
+/* 熱マップと検出枠を、映像が映っている矩形 R に重ねて描く。
+   画面の重畳と記録の静止画で共用する。s は線や文字の倍率。 */
+function drawMarks(ctx, R, s, heat) {
+  if (heat) {
+    updateHeat();
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.globalAlpha = 0.82;
+    ctx.drawImage(hcan, R.x, R.y, R.w, R.h);
+    ctx.restore();
+  }
+
+  /* 枠(四隅のかぎ括弧)+ ラベル */
+  const cw = R.w / AW, chh = R.h / AH;
+  ctx.lineWidth = Math.max(1.5, 2 * s);
+  for (let bi = 0; bi < blobs.length; bi++) {
+    const b = blobs[bi];
+    const x = R.x + b.x0 * cw, y = R.y + b.y0 * chh;
+    const w = (b.x1 - b.x0 + 1) * cw, h = (b.y1 - b.y0 + 1) * chh;
+    const v = clamp01((b.v - 0.18) / 0.62);
+    const col = v > 0.66 ? "#FF5B37" : v > 0.38 ? "#FFB341" : "#45D3C0";
+    ctx.strokeStyle = col;
+    ctx.globalAlpha = bi === 0 ? 1 : 0.5;
+    const L = Math.min(w, h) * 0.28 + 4 * s;
+    ctx.beginPath();
+    ctx.moveTo(x, y + L);           ctx.lineTo(x, y);          ctx.lineTo(x + L, y);
+    ctx.moveTo(x + w - L, y);       ctx.lineTo(x + w, y);      ctx.lineTo(x + w, y + L);
+    ctx.moveTo(x + w, y + h - L);   ctx.lineTo(x + w, y + h);  ctx.lineTo(x + w - L, y + h);
+    ctx.moveTo(x + L, y + h);       ctx.lineTo(x, y + h);      ctx.lineTo(x, y + h - L);
+    ctx.stroke();
+
+    if (bi === 0) {
+      const t = Math.round(v * 100) + "%" + (szOk ? "  " + fmtLen(szW) : "");
+      ctx.font = "600 " + Math.round(13 * s) + "px 'IBM Plex Mono', ui-monospace, monospace";
+      const tw = ctx.measureText(t).width;
+      const bh = 19 * s, pad = 6 * s;
+      const by = y - bh - 3 * s < R.y ? y + h + 3 * s : y - bh - 3 * s;
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = "#080D0E";
+      ctx.fillRect(x, by, tw + pad * 2, bh);
+      ctx.fillStyle = col;
+      ctx.fillRect(x, by, 2 * s, bh);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#EAF0ED";
+      ctx.textBaseline = "middle";
+      ctx.fillText(t, x + pad, by + bh / 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
 function render() {
   const W = overlay.width, H = overlay.height;
   octx.clearRect(0, 0, W, H);
@@ -1551,66 +1773,7 @@ function render() {
   const acquiring = filled < READY_MIN || moving;
   sweep.hidden = !acquiring;
 
-  if (showHeat && !acquiring) {
-    /* 熱マップの中身は解析のたび(15Hz)にしか変わらない。描画のたびに
-       作り直す必要はないので、変わった時だけ作る。 */
-    if (heatDirty) {
-      const px = himg.data;
-      for (let i = 0; i < NC; i++) {
-        const v = (smooth[i] - 0.14) * 335.5;        /* = /0.76*255 */
-        const q = v < 0 ? 0 : v > 255 ? 255 : v | 0;
-        const o = i << 2, m = q << 2;
-        px[o] = RAMP[m]; px[o + 1] = RAMP[m + 1]; px[o + 2] = RAMP[m + 2]; px[o + 3] = RAMP[m + 3];
-      }
-      hctx.putImageData(himg, 0, 0);
-      heatDirty = false;
-    }
-    octx.save();
-    octx.globalCompositeOperation = "lighter";
-    octx.imageSmoothingEnabled = true;
-    octx.imageSmoothingQuality = "high";
-    octx.globalAlpha = 0.82;
-    octx.drawImage(hcan, R.x, R.y, R.w, R.h);
-    octx.restore();
-  }
-
-  /* 枠(四隅のかぎ括弧)+ ラベル */
-  const cw = R.w / AW, chh = R.h / AH;
-  octx.lineWidth = Math.max(1.5, 2 * dpr);
-  for (let bi = 0; bi < blobs.length; bi++) {
-    const b = blobs[bi];
-    const x = R.x + b.x0 * cw, y = R.y + b.y0 * chh;
-    const w = (b.x1 - b.x0 + 1) * cw, h = (b.y1 - b.y0 + 1) * chh;
-    const v = clamp01((b.v - 0.18) / 0.62);
-    const col = v > 0.66 ? "#FF5B37" : v > 0.38 ? "#FFB341" : "#45D3C0";
-    octx.strokeStyle = col;
-    octx.globalAlpha = bi === 0 ? 1 : 0.5;
-    const L = Math.min(w, h) * 0.28 + 4 * dpr;
-    octx.beginPath();
-    octx.moveTo(x, y + L);           octx.lineTo(x, y);          octx.lineTo(x + L, y);
-    octx.moveTo(x + w - L, y);       octx.lineTo(x + w, y);      octx.lineTo(x + w, y + L);
-    octx.moveTo(x + w, y + h - L);   octx.lineTo(x + w, y + h);  octx.lineTo(x + w - L, y + h);
-    octx.moveTo(x + L, y + h);       octx.lineTo(x, y + h);      octx.lineTo(x, y + h - L);
-    octx.stroke();
-
-    if (bi === 0) {
-      const t = Math.round(v * 100) + "%" + (szOk ? "  " + fmtLen(szW) : "");
-      octx.font = "600 " + Math.round(13 * dpr) + "px 'IBM Plex Mono', monospace";
-      const tw = octx.measureText(t).width;
-      const bh = 19 * dpr, pad = 6 * dpr;
-      const by = y - bh - 3 * dpr < R.y ? y + h + 3 * dpr : y - bh - 3 * dpr;
-      octx.globalAlpha = 0.92;
-      octx.fillStyle = "#080D0E";
-      octx.fillRect(x, by, tw + pad * 2, bh);
-      octx.fillStyle = col;
-      octx.fillRect(x, by, 2 * dpr, bh);
-      octx.globalAlpha = 1;
-      octx.fillStyle = "#EAF0ED";
-      octx.textBaseline = "middle";
-      octx.fillText(t, x + pad, by + bh / 2);
-    }
-    octx.globalAlpha = 1;
-  }
+  drawMarks(octx, R, dpr, showHeat && !acquiring);
 
   /* 中央レティクル */
   const cx = R.x + R.w / 2, cy = R.y + R.h / 2, g = 6 * dpr, a = 13 * dpr;
@@ -1647,7 +1810,7 @@ function updateDeck() {
   if (phase === "move")      setState("hold", "移動中 — 静止してください");
   else if (phase === "acq")  setState("hold", "基準取得 " + Math.round(filled / READY_MIN * 100) + "%");
   else if (shaky)            setState("hold", "手ぶれ補正中 — 感度が下がります");
-  else if (dark)             setState("hold", $("btnTorch").hidden || torchOn ? "暗所 — 感度が下がります" : "暗所 — ☀ ライトで改善");
+  else if (dark)             setState("hold", $("btnTorch").hidden || torchOn ? "暗所 — 感度低下" : "暗所 — ☀ を推奨");
   else if (phase === "part") setState("live", "走査中 — 律動解析まで " + ((NBUF - filled) / FS).toFixed(1) + "秒");
   else                       setState("live", "走査中 — 全帯域");
 
@@ -1674,6 +1837,7 @@ function updateDeck() {
   const parts = [];
   if (phase === "part") parts.push("動き・温感のみ");
   else if (topBpm > 0 && mRhythm > 0.25) parts.push(topBand + " " + topBpm + "/分");
+  if (phase === "full" && mechNote > 0.4) parts.push("一定周期を除外");
   parts.push("検出 " + blobs.length + " 件");
   if (phase === "full") parts.push("最大 " + peak + "%");
   vSub.textContent = parts.join(" · ");
@@ -1804,9 +1968,332 @@ function drawSpark() {
   }
 }
 
+/* ══ 記録 ══════════════════════════════════════════
+   検出した瞬間の画面(熱マップ・枠つき)と数値を、端末のブラウザ内
+   (IndexedDB)にだけ保存する。外へは送らない。
+   自動記録は反応が「生体の可能性」を超えたところで1回の出来事として扱い、
+   その間で最も強かった瞬間を1枚だけ残す。反応が下がるか60秒経つまで次は
+   記録しないので、同じ対象を写し続けても記録が溢れない。 */
+const LOG_MAX = 200;
+const AUTO_ON = 0.46, AUTO_OFF = 0.36, AUTO_REARM = 0.30;
+const AUTO_MAX_MS = 8000, AUTO_GAP_MS = 60000;
+
+let autoLog = true;
+try { autoLog = localStorage.getItem("bioscanner.autoLog") !== "0"; } catch {}
+let ep = null;                           // 進行中の出来事 { t0, best, lastSnap, meta }
+let epArmed = true, lastCommit = 0;
+
+/* 自動記録の候補と手動記録で描き先を分ける。分けないと、出来事の途中で
+   手動記録すると候補の絵が上書きされてしまう。 */
+const autoCan = document.createElement("canvas");
+const snapCan = document.createElement("canvas");
+
+/* ── IndexedDB ── */
+let dbP = null;
+function db() {
+  if (!dbP) dbP = new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error("no idb"));
+    const q = indexedDB.open("bioscanner", 1);
+    q.onupgradeneeded = () => q.result.createObjectStore("records", { keyPath: "id", autoIncrement: true });
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  });
+  dbP.catch(() => { dbP = null; });
+  return dbP;
+}
+function tx(mode, fn) {
+  return db().then((d) => new Promise((res, rej) => {
+    const t = d.transaction("records", mode);
+    const st = t.objectStore("records");
+    let out;
+    Promise.resolve(fn(st)).then((v) => { out = v; });
+    t.oncomplete = () => res(out);
+    t.onerror = t.onabort = () => rej(t.error);
+  }));
+}
+const req = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const dbAll = () => tx("readonly", (st) => req(st.getAll()));
+const dbDel = (id) => tx("readwrite", (st) => { st.delete(id); });
+const dbClear = () => tx("readwrite", (st) => { st.clear(); });
+const dbCount = () => tx("readonly", (st) => req(st.count()));
+/* 追加して、上限を超えた古いものを消す(id は増える一方なので小さい順が古い) */
+const dbAdd = (rec) => tx("readwrite", async (st) => {
+  st.add(rec);
+  const keys = await req(st.getAllKeys());
+  for (let k = 0; k < keys.length - LOG_MAX; k++) st.delete(keys[k]);
+});
+
+/* ── 静止画 ── */
+const pad2 = (n) => String(n).padStart(2, "0");
+function fmtTime(t, sep = "-") {
+  const d = new Date(t);
+  return d.getFullYear() + sep + pad2(d.getMonth() + 1) + sep + pad2(d.getDate()) + " " +
+    pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+}
+
+/* いまの状態を記録用の数値にまとめる */
+function snapMeta(mode) {
+  const live = !moving && filled >= READY_MIN;
+  const v = live ? verdictEma : 0;
+  let w = WORDS[0];
+  for (const row of WORDS) if (v >= row[0]) w = row;
+  return {
+    t: Date.now(), mode,
+    v: Math.round(v * 100), lv: w[2],
+    word: live ? (filled < NBUF ? w[1] + "(暫定)" : w[1]) : "判定前",
+    period: topBpm > 0 && mRhythm > 0.25 ? topBand + " " + topBpm + "/分" : "",
+    mech: mechNote > 0.4,
+    m: Math.round(mMotion * 100), r: Math.round(mRhythm * 100), w: Math.round(mWarm * 100),
+    n: blobs.length,
+    size: blobs.length && szOk ? "幅 " + fmtRange(szW, szCell) + " · 高さ " + fmtRange(szH, szCell) + " · 距離 " + fmtLen(szD)
+        : blobs.length ? "角寸法 " + szAW.toFixed(1) + "° × " + szAH.toFixed(1) + "°" : "",
+    dark: noiseSd > 1.5 || lumaEma < 30
+  };
+}
+
+/* 映像の1コマに熱マップ・枠と、下に数値の帯を描いて cv に置く */
+function drawSnapshot(meta, cv) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return false;
+  const sc = Math.min(1, 1280 / Math.max(vw, vh));
+  const w = Math.round(vw * sc), h = Math.round(vh * sc);
+  const s = Math.max(1, w / 640);
+  const strip = Math.round(58 * s);
+  cv.width = w; cv.height = h + strip;
+  const c = cv.getContext("2d");
+  c.drawImage(video, 0, 0, w, h);
+  if (!moving && filled >= READY_MIN) drawMarks(c, { x: 0, y: 0, w, h }, s, showHeat);
+
+  c.fillStyle = "#080D0E";
+  c.fillRect(0, h, w, strip);
+  c.fillStyle = "#FFB341";
+  c.fillRect(0, h, w, Math.max(1, Math.round(s)));
+  c.textBaseline = "middle";
+  const mono = "'IBM Plex Mono', ui-monospace, Menlo, monospace";
+  const l1 = "生体スキャナー  " + fmtTime(meta.t) + "  反応 " + meta.v + "% " + meta.word;
+  const l2 = [meta.period, meta.mech ? "一定周期を除外" : "", "動き " + meta.m + " 律動 " + meta.r + " 温感 " + meta.w]
+    .filter(Boolean).join(" · ");
+  const l3 = meta.size || (meta.n ? "" : "検出なし");
+  const maxW = w - 20 * s;
+  c.fillStyle = "#EAF0ED";
+  c.font = "600 " + Math.round(13 * s) + "px " + mono;
+  c.fillText(l1, 10 * s, h + 15 * s, maxW);
+  c.fillStyle = "#9AA9A5";
+  c.font = Math.round(11 * s) + "px " + mono;
+  c.fillText(l2, 10 * s, h + 32 * s, maxW);
+  if (l3) c.fillText(l3, 10 * s, h + 47 * s, maxW);
+  return true;
+}
+
+const toBlob = (cv, q) => new Promise((res) => cv.toBlob(res, "image/jpeg", q));
+
+/* cv の内容を保存する。toBlob は呼んだ時点の絵を写し取るので、
+   直後に cv を描き直しても保存される絵は変わらない。縮小版も同期的に
+   作っておく(await の後だと描き直された絵を縮小してしまう)。 */
+async function commitSnapshot(meta, cv) {
+  const tw = 320, th = Math.round(cv.height * tw / cv.width);
+  const tc = document.createElement("canvas");
+  tc.width = tw; tc.height = th;
+  tc.getContext("2d").drawImage(cv, 0, 0, tw, th);
+  const [img, thumb] = await Promise.all([toBlob(cv, 0.86), toBlob(tc, 0.7)]);
+  if (!img || !thumb) return;
+  try {
+    await dbAdd({ ...meta, img, thumb });
+    toast(meta.mode === "auto" ? "反応 " + meta.v + "% を自動で記録しました" : "記録しました");
+    refreshCount();
+  } catch {
+    toast("記録を保存できませんでした(ブラウザの保存領域が使えません)");
+  }
+}
+
+/* 主ループから毎回呼ぶ。自動記録の出来事を進める */
+function autoStep(now) {
+  if (!autoLog || !running) { ep = null; return; }
+  const live = !moving && filled >= READY_MIN;
+  const v = verdictEma;
+  if (ep) {
+    if (live && v > ep.best + 0.02 && blobs.length && now - ep.lastSnap > 500) {
+      /* より強い瞬間に差し替える */
+      const meta = snapMeta("auto");
+      if (drawSnapshot(meta, autoCan)) { ep.best = v; ep.lastSnap = now; ep.meta = meta; }
+    }
+    if (!live || v < AUTO_OFF || now - ep.t0 > AUTO_MAX_MS) {
+      commitSnapshot(ep.meta, autoCan);
+      ep = null; epArmed = false; lastCommit = now;
+    }
+    return;
+  }
+  if (!epArmed && (v < AUTO_REARM || now - lastCommit > AUTO_GAP_MS)) epArmed = true;
+  if (epArmed && live && v >= AUTO_ON && blobs.length) {
+    const meta = snapMeta("auto");
+    if (drawSnapshot(meta, autoCan)) ep = { t0: now, best: v, lastSnap: now, meta };
+  }
+}
+
+/* 停止やカメラ切替の前に、進行中の出来事を確定させる */
+function flushAuto() {
+  if (ep) { commitSnapshot(ep.meta, autoCan); ep = null; epArmed = false; lastCommit = performance.now(); }
+}
+
+let toastTimer = 0;
+function toast(text) {
+  const el = $("toast");
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 1800);
+}
+
+function refreshCount() {
+  dbCount().then((n) => { $("logCount").textContent = n ? String(n) : ""; }).catch(() => {});
+}
+
+/* ── 一覧 ── */
+const logDlg = $("logDlg");
+let urls = [];
+let shown = null;                        // 詳細表示中の記録
+
+function freeUrls() { for (const u of urls) URL.revokeObjectURL(u); urls = []; }
+function objUrl(b) { const u = URL.createObjectURL(b); urls.push(u); return u; }
+
+async function openLog() {
+  if (!logDlg.open) logDlg.showModal();
+  showList();
+}
+
+async function showList() {
+  shown = null;
+  freeUrls();
+  $("logDetail").hidden = true;
+  $("logNote").hidden = false;
+  $("btnBack").hidden = $("btnDel").hidden = $("btnSave").hidden = true;
+  $("btnClear").hidden = false;
+  const grid = $("logGrid");
+  grid.hidden = false;
+  grid.textContent = "";
+  let recs = [];
+  try { recs = await dbAll(); }
+  catch {
+    $("logEmpty").hidden = false;
+    $("logEmpty").textContent = "このブラウザでは記録を保存できません(プライベートモードなど)。";
+    return;
+  }
+  recs.sort((a, b) => b.t - a.t);
+  $("logEmpty").hidden = recs.length > 0;
+  $("btnClear").hidden = !recs.length;
+  for (const r of recs) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rec";
+    b.dataset.lv = r.lv;
+    const img = document.createElement("img");
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = objUrl(r.thumb);
+    const cap = document.createElement("span");
+    cap.className = "r-cap";
+    const v = document.createElement("span");
+    v.className = "r-v";
+    v.textContent = r.v + "%" + (r.period ? "  " + r.period : "");
+    const t = document.createElement("span");
+    t.className = "r-t";
+    t.textContent = fmtTime(r.t, "/").slice(5) + (r.mode === "auto" ? " 自動" : " 手動");
+    cap.append(v, t);
+    b.append(img, cap);
+    b.addEventListener("click", () => showDetail(r));
+    grid.append(b);
+  }
+}
+
+function showDetail(r) {
+  shown = r;
+  $("logGrid").hidden = true;
+  $("logEmpty").hidden = true;
+  $("logDetail").hidden = false;
+  $("logNote").hidden = true;
+  $("dImg").src = objUrl(r.img);
+  const rows = [
+    ["日時", fmtTime(r.t)],
+    ["反応", r.v + "% " + r.word],
+    ["周期", (r.period || "—") + (r.mech ? "(一定周期を除外)" : "")],
+    ["内訳", "動き " + r.m + " · 律動 " + r.r + " · 温感 " + r.w],
+    ["検出", r.n + " 件"],
+    ["大きさ", r.size || "—"],
+    ["記録", (r.mode === "auto" ? "自動" : "手動") + (r.dark ? " · 暗所" : "")]
+  ];
+  const dl = $("dMeta");
+  dl.textContent = "";
+  for (const [k, v] of rows) {
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v;
+    dl.append(dt, dd);
+  }
+  $("btnBack").hidden = $("btnDel").hidden = $("btnSave").hidden = false;
+  $("btnClear").hidden = true;
+  logDlg.querySelector(".log-body").scrollTop = 0;
+}
+
+/* 共有(写真アプリ等へ)できればそうし、できなければファイルとして保存する */
+async function saveRecord(r) {
+  const d = new Date(r.t);
+  const name = "bioscanner-" + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + "-" +
+    pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds()) + ".jpg";
+  const file = new File([r.img], name, { type: "image/jpeg" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "生体スキャナーの記録" });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;     /* 利用者が共有を取り消した */
+  }
+  const u = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = u; a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 4000);
+}
+
+function setAuto(on) {
+  autoLog = on;
+  if (!on) ep = null;
+  try { localStorage.setItem("bioscanner.autoLog", on ? "1" : "0"); } catch {}
+  for (const el of $("segAuto").querySelectorAll("button"))
+    el.setAttribute("aria-pressed", String((el.dataset.v === "1") === on));
+}
+
 /* ══ 操作 ════════════════════════════════════════ */
 $("btnStart").addEventListener("click", start);
 $("btnStop").addEventListener("click", () => stop(true));
+
+$("btnSnap").addEventListener("click", () => {
+  if (!running || !video.videoWidth) { toast("カメラを起動してから記録してください"); return; }
+  const meta = snapMeta("manual");
+  if (drawSnapshot(meta, snapCan)) commitSnapshot(meta, snapCan);
+});
+$("btnLog").addEventListener("click", openLog);
+$("btnLogClose").addEventListener("click", () => logDlg.close());
+logDlg.addEventListener("close", () => { freeUrls(); shown = null; });
+$("btnBack").addEventListener("click", showList);
+$("btnSave").addEventListener("click", () => { if (shown) saveRecord(shown); });
+$("btnDel").addEventListener("click", async () => {
+  if (!shown || !confirm("この記録を削除しますか?")) return;
+  try { await dbDel(shown.id); } catch {}
+  refreshCount();
+  showList();
+});
+$("btnClear").addEventListener("click", async () => {
+  if (!confirm("すべての記録を削除しますか?元に戻せません。")) return;
+  try { await dbClear(); } catch {}
+  refreshCount();
+  showList();
+});
+$("segAuto").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-v]");
+  if (b) setAuto(b.dataset.v === "1");
+});
+setAuto(autoLog);
+refreshCount();
 
 $("btnFlip").addEventListener("click", () => {
   facing = facing === "environment" ? "user" : "environment";
