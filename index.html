@@ -60,6 +60,9 @@ body{
   height:100dvh;
   display:grid;
   grid-template-rows:auto minmax(0,1fr) auto;
+  /* 列を画面幅に縛る。縛らないと状態表示などの折り返さない文字が
+     画面ごと横に押し広げ、右端のボタンや計器が切れる。 */
+  grid-template-columns:minmax(0,1fr);
   gap:0;
   overflow:hidden;
 }
@@ -89,11 +92,14 @@ body{
 
 .state{
   display:flex; align-items:center; gap:6px;
+  min-width:0;
   font-family:var(--f-lab);
   font-size:12px; letter-spacing:.1em;
   color:var(--ink-2);
   white-space:nowrap;
 }
+#stateText{overflow:hidden;text-overflow:ellipsis}
+@media (max-width:440px){ .mark .en,.meter .m-lab .en{display:none} }
 .dot{
   width:7px;height:7px;border-radius:50%;
   background:var(--ink-3);
@@ -137,6 +143,8 @@ body{
   object-fit:contain;
   background:#05090A;
 }
+/* 前面カメラは鏡像で見せる。重畳は解析側で反転済みなので映像だけ反転する */
+.scope.mirror #video{transform:scaleX(-1)}
 #overlay{
   position:absolute; inset:0;
   width:100%; height:100%;
@@ -261,14 +269,15 @@ body{
 }
 
 /* メーター(単色・琥珀) */
-.meters{display:grid;gap:7px;align-content:start}
-.meter{display:grid;grid-template-columns:1fr auto;gap:2px var(--s2);align-items:center}
+.meters{display:grid;gap:7px;align-content:start;min-width:0}
+.meter{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px var(--s2);align-items:center}
 .meter .m-lab{
   grid-column:1;
   display:flex; align-items:baseline; gap:6px;
   font-size:11px;
   color:var(--ink-2);
   white-space:nowrap;
+  overflow:hidden;
 }
 .meter .m-lab .en{
   font-family:var(--f-lab);
@@ -481,6 +490,113 @@ body{
 .f-note.warn{color:var(--amber-2)}
 .s-panel .seg button{font-size:11px;padding:6px 10px}
 
+/* ── 記録 ───────────────────────────────────── */
+.count{
+  font-family:var(--f-num);
+  font-size:11px;
+  color:var(--ink-3);
+  margin-left:4px;
+}
+.toast{
+  position:absolute; left:50%; bottom:14px;
+  transform:translateX(-50%);
+  background:rgba(8,13,14,.92);
+  border:1px solid var(--amber-3);
+  color:var(--ink);
+  font-size:12px;
+  padding:6px 12px;
+  border-radius:7px;
+  pointer-events:none;
+  white-space:nowrap;
+}
+.toast[hidden]{display:none}
+
+.log{
+  width:min(720px,100vw);
+  max-width:100vw;
+  height:min(100dvh,900px);
+  max-height:100dvh;
+  margin:auto;
+  padding:0;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--panel);
+  color:var(--ink);
+}
+.log::backdrop{background:rgba(3,6,7,.72)}
+.log[open]{display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+.log-head{
+  display:flex; align-items:center; gap:var(--s3);
+  padding:var(--s3) var(--s4);
+  border-bottom:1px solid var(--line);
+  flex-wrap:wrap;
+}
+.log-head h2{margin:0;font-size:15px;font-weight:700;letter-spacing:.04em}
+.log-body{overflow-y:auto;padding:var(--s3) var(--s4);overscroll-behavior:contain}
+.log-foot{
+  display:flex; align-items:center; gap:var(--s3);
+  padding:var(--s3) var(--s4) calc(var(--s3) + env(safe-area-inset-bottom,0px));
+  border-top:1px solid var(--line);
+  flex-wrap:wrap;
+}
+.log-note{font-size:11px;color:var(--ink-3);line-height:1.6;flex:1 1 220px}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:var(--s3);
+}
+.grid[hidden],.log-note[hidden]{display:none}
+.rec{
+  appearance:none;
+  display:grid; gap:4px;
+  padding:0;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:8px;
+  overflow:hidden;
+  color:var(--ink);
+  text-align:left;
+  cursor:pointer;
+  font:inherit;
+}
+.rec:hover{border-color:var(--ink-3)}
+.rec img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:#05090A}
+.rec .r-cap{display:grid;padding:2px 8px 7px;gap:1px}
+.rec .r-v{font-family:var(--f-num);font-weight:600;font-size:15px;font-variant-numeric:tabular-nums}
+.rec .r-t{font-family:var(--f-num);font-size:10px;color:var(--ink-3)}
+.rec[data-lv="3"] .r-v{color:var(--amber)}
+.rec[data-lv="4"] .r-v{color:var(--ember)}
+.rec[data-lv="2"] .r-v{color:var(--amber-2)}
+.rec[data-lv="1"] .r-v{color:var(--cyan)}
+.empty{color:var(--ink-3);font-size:13px;text-align:center;padding:40px 0}
+.detail{display:grid;gap:var(--s3)}
+.detail[hidden]{display:none}
+.detail img{width:100%;height:auto;border-radius:8px;background:#05090A}
+.detail dl{
+  margin:0;
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:4px var(--s3);
+  font-size:12px;
+}
+.detail dt{color:var(--ink-3)}
+.detail dd{margin:0;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.btn{
+  appearance:none;
+  background:var(--panel-2);
+  border:1px solid var(--line-2);
+  color:var(--ink);
+  border-radius:7px;
+  font-family:var(--f-ui);
+  font-size:12px;
+  padding:7px 14px;
+  cursor:pointer;
+}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--amber);color:#120D04;border-color:var(--amber);font-weight:700}
+.btn.danger{color:var(--ember);border-color:#5A2418}
+.btn[hidden]{display:none}
+
 :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 
 @media (prefers-reduced-motion:reduce){
@@ -524,10 +640,15 @@ body{
     <video id="video" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
     <div class="sweep" id="sweep" hidden></div>
+    <div class="toast" id="toast" role="status" hidden></div>
 
     <div class="veil" id="veil">
       <h1 id="veilTitle">かざした範囲の生体反応を探す</h1>
-      <p id="veilText">背面カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。</p>
+      <p id="veilText">カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。</p>
+      <div class="seg" id="segCam" role="group" aria-label="使うカメラ">
+        <button type="button" data-v="environment" aria-pressed="true">背面カメラ</button>
+        <button type="button" data-v="user" aria-pressed="false">前面カメラ</button>
+      </div>
       <button class="start" id="btnStart">カメラを起動</button>
     </div>
   </main>
@@ -617,6 +738,8 @@ body{
       </div>
       <div class="ctrl-spacer"></div>
       <div class="seg">
+        <button type="button" id="btnSnap" title="いまの画面を記録">記録</button>
+        <button type="button" id="btnLog" title="記録の一覧">一覧<span class="count" id="logCount"></span></button>
         <button type="button" id="btnStop">停止</button>
       </div>
     </div>
@@ -630,34 +753,247 @@ body{
           <li><strong>律動</strong> — その明るさの揺れが呼吸帯(約14〜35回/分)や脈拍帯(約49〜183回/分)の周期を持つかを周波数解析で判定。ピークを全帯域の平均ではなく<strong>ピーク周辺の背景</strong>と比べることで、風や水面のような広帯域の揺れを退けます。</li>
           <li><strong>温感</strong> — 色相と彩度から肌・毛色らしさを<strong>推定</strong>したもの。温度ではありません。</li>
         </ul>
-        <p class="warn"><strong>周期的に動く非生物は区別できません。</strong>振り子状に揺れる枝、扇風機、一定周期で明滅する光は、本物の呼吸・脈拍と同じ強さで検出されます。周期的に動くものが生物かどうかは周波数解析だけでは決められないためで、手法そのものの限界です。</p>
+        <p class="warn"><strong>周期的に動く非生物は完全には区別できません。</strong>扇風機・振り子・明滅する光のように周期が一定なものは、十数秒観察すると弱められますが、それまでの間は本物の呼吸・脈拍と同じ強さで検出されます。</p>
         <p class="warn">結果は生体の存在を確証するものではありません。人命・安全・医療の判断には使用しないでください。</p>
-        <p>映像はすべて端末内で処理され、どこにも送信・保存されません。</p>
+        <p><strong>一定周期の除外</strong> — 機械の周期はほとんど揺らがないのに対し、呼吸数や心拍数は数秒単位で揺らぎます。同じ場所の周期を十数秒観察し、揺らぎが小さすぎるものは機械的な周期として弱めます。ただし風に揺れる枝のように不規則に揺れるものは生体と区別できず、とても規則正しく呼吸する個体は弱められることがあります。</p>
+        <p><strong>暗所</strong> — 映像のノイズの大きさを測り、ノイズで動きを誤検出しないようしきい値を自動で上げます。その分、弱い動きは拾えなくなります。</p>
+        <p>映像はすべて端末内で処理され、外部へは送信されません。<strong>記録</strong>した静止画は、この端末のブラウザ内にだけ保存されます(一覧から削除できます)。</p>
       </div>
     </details>
 
   </footer>
 </div>
 
+<dialog class="log" id="logDlg" aria-labelledby="logTitle">
+  <div class="log-head">
+    <h2 id="logTitle">検出の記録</h2>
+    <div class="rail-spacer"></div>
+    <div class="sens">
+      <span>自動記録</span>
+      <div class="seg" id="segAuto" role="group" aria-label="自動記録">
+        <button type="button" data-v="1" aria-pressed="true">入</button>
+        <button type="button" data-v="0" aria-pressed="false">切</button>
+      </div>
+    </div>
+    <button type="button" class="icon-btn" id="btnLogClose" aria-label="閉じる">✕</button>
+  </div>
+  <div class="log-body">
+    <div class="grid" id="logGrid"></div>
+    <p class="empty" id="logEmpty" hidden>記録はまだありません。<br>「生体の可能性」以上の反応が出ると自動で記録されます。</p>
+    <div class="detail" id="logDetail" hidden>
+      <img id="dImg" alt="記録した画面">
+      <dl id="dMeta"></dl>
+    </div>
+  </div>
+  <div class="log-foot">
+    <p class="log-note" id="logNote">記録はこの端末のブラウザ内にだけ保存されます。最大 200 件で、古いものから消えます。</p>
+    <button type="button" class="btn" id="btnBack" hidden>一覧へ戻る</button>
+    <button type="button" class="btn danger" id="btnDel" hidden>削除</button>
+    <button type="button" class="btn primary" id="btnSave" hidden>保存・共有</button>
+    <button type="button" class="btn danger" id="btnClear">すべて削除</button>
+  </div>
+</dialog>
+
 <script>
 "use strict";
+
+/* ══ 解析の核 ══════════════════════════════════════
+   DOM にも映像にも触れない純粋な定義だけをこの区間に置く。
+   tools/verify.mjs がこの区間をそのまま取り出し、合成信号で検証する。
+   区間の印を消したり、外の変数をここから参照したりしないこと。 */
+/* ==CORE:BEGIN== */
+const NBUF = 128;                        // 時系列バッファ長
+const FS = 15;                           // 解析レート(Hz) → 128/15 ≒ 8.5秒分
+const SPEC_EVERY = 8;                    // 周波数解析の間隔(tick)
+const K_LO = 2, K_HI = 26;               // 解析ビン(f = k·FS/NBUF)
+const K_BREATH_HI = 5;                   // 呼吸帯 k=2..5  → 0.23–0.59Hz
+const K_PULSE_LO = 7;                    // 脈拍帯 k=7..26 → 0.82–3.05Hz
+/* 際立ちを律動スコア 0..1 に写す範囲。合成信号での実測分布から決めた:
+   生体(正弦的)は中央値 11–26、非生体(風・水面・ノイズ)は 2–5。 */
+const PROM_LO = 7, PROM_HI = 18;
+
+const hann = new Float32Array(NBUF);
+for (let t = 0; t < NBUF; t++) hann[t] = 0.5 - 0.5 * Math.cos(2 * Math.PI * t / (NBUF - 1));
+const mags = new Float32Array(K_HI + 2);  // 補間のため K_LO-1..K_HI+1 まで持つ
+const bgW  = new Float32Array(16);        // 背景中央値を取るための作業領域
+
+const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+
+/* Goertzel法: n点の信号から k番ビンの振幅 */
+function goertzel(s, n, k) {
+  const c = 2 * Math.cos(2 * Math.PI * k / n);
+  let s1 = 0, s2 = 0;
+  for (let i = 0; i < n; i++) { const v = s[i] + c * s1 - s2; s2 = s1; s1 = v; }
+  const m = s1 * s1 + s2 * s2 - c * s1 * s2;
+  return m > 0 ? Math.sqrt(m) : 0;
+}
+
+/* 平均を引いて Hann 窓をかける(その場で書き換える) */
+function detrendWindow(sig) {
+  let mean = 0;
+  for (let t = 0; t < NBUF; t++) mean += sig[t];
+  mean /= NBUF;
+  for (let t = 0; t < NBUF; t++) sig[t] = (sig[t] - mean) * hann[t];
+}
+
+/* 窓をかけた1セルの時系列から、呼吸帯/脈拍帯の最も際立つピークを求める。
+   結果は out に書く: k(ビン) / f(補間した小数ビン) / prom(際立ち) / sd(振幅) /
+   r(律動スコア 0..1)。 */
+function rhythmOf(sig, out) {
+  /* 振幅。Hann窓はRMSを√(3/8)倍にするので戻しておく。 */
+  let e = 0;
+  for (let t = 0; t < NBUF; t++) e += sig[t] * sig[t];
+  const sd = Math.sqrt(e / NBUF) / 0.6124;
+
+  let bB = 0, kB = K_LO, bP = 0, kP = K_PULSE_LO;
+  /* 両端の外側1ビンはピーク位置の補間にだけ使う */
+  mags[K_LO - 1] = goertzel(sig, NBUF, K_LO - 1);
+  mags[K_HI + 1] = goertzel(sig, NBUF, K_HI + 1);
+  for (let k = K_LO; k <= K_HI; k++) {
+    const m = goertzel(sig, NBUF, k);
+    mags[k] = m;
+    if (k <= K_BREATH_HI) { if (m > bB) { bB = m; kB = k; } }
+    else if (k >= K_PULSE_LO) { if (m > bP) { bP = m; kP = k; } }
+  }
+  const isB = bB >= bP;
+  const peakMag = isB ? bB : bP;
+  const kTop = isB ? kB : kP;
+  const f = peakBin(kTop);
+
+  /* 際立ちは「全帯域の平均」ではなく「ピーク周辺の背景」と比べる。
+     全帯域平均と比べると、風に揺れる草木のような低周波ほど強い 1/f 的な
+     信号は、高周波まで含めた平均より必ず大きくなるため、周期性がなくても
+     高得点になってしまう。そこで ±6 ビンの窓から Hann 窓の主ローブ(±2)を
+     除いた背景の中央値を取り、山が地の高さからどれだけ抜きん出ているかを見る。
+     倍音(2f)の山も背景から除く。呼吸は正弦波ではないので必ず倍音を持ち、
+     呼吸帯の上半分(約0.4Hz〜)ではそれがちょうど背景の窓に入る。除かないと
+     背景が倍音で底上げされ、本物の呼吸の際立ちが半分以下に潰れる。
+     除いた分だけ背景が足りなくなったら、窓を外へ広げて4ビン以上を確保する。 */
+  const h2 = 2 * f;
+  let nb = 0;
+  for (let w = 6; w <= 10 && nb < 4; w++) {
+    nb = 0;
+    const kA = Math.max(K_LO, kTop - w), kZ = Math.min(K_HI, kTop + w);
+    for (let k = kA; k <= kZ; k++) {
+      if (k >= kTop - 2 && k <= kTop + 2) continue;
+      if (Math.abs(k - h2) < 1.5) continue;
+      bgW[nb++] = mags[k];
+    }
+  }
+  for (let a = 1; a < nb; a++) {          /* 小さい配列なので挿入ソートで中央値 */
+    const v = bgW[a]; let b = a - 1;
+    while (b >= 0 && bgW[b] > v) { bgW[b + 1] = bgW[b]; b--; }
+    bgW[b + 1] = v;
+  }
+  const bgMed = nb ? bgW[nb >> 1] : 0;
+  const prom = peakMag / (bgMed > 1e-9 ? bgMed : 1e-9);
+
+  out.k = kTop; out.f = f; out.prom = prom; out.sd = sd;
+  /* センサーノイズだけで偶然ピークが立つのを抑える振幅の門。
+     あくまで下限の門であって重みではないので、早く 1.0 に飽和させる。
+     暗所でノイズが増えてもこの門は動かさない。際立ちは山と背景の比なので
+     ノイズが増えれば背景も同じだけ上がり、ノイズだけで際立ちが出ることは
+     ない(tools/verify.mjs の暗所の表で確認できる)。 */
+  const ampGate = clamp01((sd - 0.6) / 1.2);
+  out.r = clamp01((prom - PROM_LO) / (PROM_HI - PROM_LO)) * ampGate;
+}
+
+/* 主ローブの3点からガウス補間で真のピーク位置(小数ビン)を求める。
+   Hann 窓の主ローブは対数を取るとほぼ放物線になるので偏りが小さい。 */
+function peakBin(k) {
+  const a = mags[k - 1], b = mags[k], c = mags[k + 1];
+  if (!(a > 0 && b > 0 && c > 0)) return k;
+  const la = Math.log(a), lb = Math.log(b), lc = Math.log(c);
+  const den = la - 2 * lb + lc;
+  if (den >= 0) return k;                /* 山になっていない */
+  const d = 0.5 * (la - lc) / den;
+  return k + (d < -0.5 ? -0.5 : d > 0.5 ? 0.5 : d);
+}
+
+/* ── 周期の安定度 ─────────────────────────────────
+   周波数解析だけでは、周期的に動く非生物(扇風機・振り子・明滅する光)と
+   呼吸・脈拍を区別できない。違いが出るのは周期の「揺らぎ」で、機械の周期は
+   ほとんど変わらないのに対し、生き物の呼吸数や心拍数は数秒単位で揺らぐ。
+   そこでセルごとにピーク周波数(補間した小数ビン)を時間方向に追い、
+   揺らぎが小さすぎるものを機械的な周期として弱める。
+   揺らぎは周波数に対する比ではなく、ビン単位の絶対量で見る。ピーク位置の
+   推定誤差はビン単位でほぼ一定(約0.02–0.03ビン)なので、比で見ると低い
+   周波数ほど機械の周期が揺らいで見え、ゆっくりした振り子を取り逃がす。
+   バッファ1本分(8.5秒)の窓は大きく重なるので、揺らぎを見るには窓を
+   何本も跨いで観察する必要がある。判定に十数秒かかるのはそのため。 */
+const STAB_A   = 1 / 40;                 // 平均・分散の指数移動の重み(≒21秒)
+const STAB_GAP = 6;                      // これだけ途切れたら観察をやり直す(解析回数)
+const STAB_N0  = 16, STAB_N1 = 12;       // 観察回数がこの範囲で判定を効かせ始める
+const STAB_LO  = 0.035, STAB_HI = 0.06;  // 揺らぎ(ビン)。LO 以下は機械とみなす
+const MECH_DAMP = 0.85;                  // 機械とみなしたときに律動を弱める割合
+
+/* st = { n, m, v, t } … セルごとの観察回数・平均・分散・最後に観察した時刻 */
+function trackFreq(st, i, f, now) {
+  if (now - st.t[i] > STAB_GAP) st.n[i] = 0;
+  st.t[i] = now;
+  const n = ++st.n[i];
+  if (n === 1) { st.m[i] = f; st.v[i] = 0; return; }
+  const a = Math.max(1 / n, STAB_A);
+  const d = f - st.m[i];
+  st.m[i] += a * d;
+  st.v[i] = (1 - a) * (st.v[i] + a * d * d);
+}
+
+/* 機械的な周期らしさ 0..1。観察が足りないうちは 0(= 弱めない) */
+function mechOf(st, i, now) {
+  if (now - st.t[i] > STAB_GAP) return 0;
+  const ready = clamp01((st.n[i] - STAB_N0) / STAB_N1);
+  if (!ready) return 0;
+  const sd = Math.sqrt(st.v[i]);
+  return ready * clamp01((STAB_HI - sd) / (STAB_HI - STAB_LO));
+}
+
+/* 律動スコアを観察できる最小値。これ未満のピークは周期の追跡に使わない */
+const R_TRACK = 0.25;
+
+/* ── 映像のノイズ ─────────────────────────────────
+   暗い場所ではセンサーの増幅が上がり、静止した場面でもフレームごとに輝度が
+   ばらつく。固定のしきい値のままだと、このばらつきが「動き」として数えられ、
+   画面全体の動きのスコアが底上げされるうえ、ほぼ全セルが動いていることに
+   なってカメラの移動と誤判定し、バッファを捨て続けて判定が出なくなる。
+   そこでフレーム間の残差の分布からノイズの大きさを測り、しきい値をそれに
+   合わせて引き上げる。残差は下位30%点で見る。被写体が画面の大半を占めても
+   動いていない部分だけで測れるようにするため。
+   静止した場面では残差 = 2フレームのノイズの差 ~ |N(0, 2σ²)| なので、
+   その30%点は σ·√2·0.385 = 0.545σ になる。 */
+const RES_STEP = 0.1;                    // 残差ヒストグラムの刻み(輝度)
+const MOVE_ON = 0.55, MOVE_OFF = 0.32;   // 動いたセルの割合によるカメラ移動の判定
+
+/* 残差のヒストグラム(RES_STEP 刻み・256段)からノイズの標準偏差を推定する */
+function noiseOfRes(hist, n) {
+  const target = n * 0.3;
+  let acc = 0;
+  for (let q = 0; q < 256; q++) {
+    acc += hist[q];
+    if (acc >= target) return (q + 0.5) * RES_STEP / 0.545;
+  }
+  return 255.5 * RES_STEP / 0.545;
+}
+/* 「動いた」とみなす残差。明るい場面では従来どおり 2.5 で、ノイズが
+   大きくなるとノイズだけでは 1% 程度しか超えない水準(≒2.5σ√2)に上がる。 */
+function moveThr(noiseSd) { return Math.max(2.5, 3.5 * noiseSd); }
+/* 動きのスコアの床。ノイズだけの残差の指数平均は平均 1.13σ・ばらつき約 0.27σ。
+   床をその少し上に置き、ノイズだけのセルがほぼ 0 になるようにする。
+   高くしすぎると弱く動く被写体まで削れるので、検証で両者の釣り合う 1.3σ とした。 */
+const MOTION_FLOOR_K = 1.3;
+function motionFloor(noiseSd) { return Math.max(0.4, MOTION_FLOOR_K * noiseSd); }
+function motionNorm(m, floor) {
+  const v = (m - floor) / 7;
+  return v <= 0 ? 0 : Math.pow(v > 1 ? 1 : v, 0.75);
+}
+/* ==CORE:END== */
 
 /* ══ 解析パラメータ ══════════════════════════════════
    映像を 48×36 の格子に縮小し、各セルの輝度を時系列バッファに貯める。
    そこから「動きの強さ」「揺れの周期性」「色の暖かさ」を取り出す。 */
 const AW = 48, AH = 36, NC = AW * AH;   // 解析格子
-const NBUF = 128;                        // 時系列バッファ長
-const FS = 15;                           // 解析レート(Hz) → 128/15 ≒ 8.5秒分
 const READY_MIN = 48;                    // 暫定判定を出す最小フレーム数(≒3.2秒)
-const SPEC_EVERY = 8;                    // 周波数解析の間隔(tick)
 const CAND = 72;                         // 周波数解析する候補セル数
-const K_LO = 2, K_HI = 26;               // 解析ビン(f = k·FS/NBUF)
-const K_BREATH_HI = 5;                   // 呼吸帯 k=2..5  → 0.23–0.59Hz
-const K_PULSE_LO = 7;                    // 脈拍帯 k=7..26 → 0.82–3.05Hz
-/* 際立ちを律動スコア 0..1 に写す範囲。合成信号での実測分布から決めた:
-   生体(正弦的)は中央値 11–26、非生体(風・水面・ノイズ)は 2–5。
-   この範囲で検出率 87% / 誤検出率 3%。 */
-const PROM_LO = 7, PROM_HI = 18;
 
 const ring   = new Float32Array(NC * NBUF);
 const prevY  = new Float32Array(NC);
@@ -688,9 +1024,7 @@ let nBasis = 0;
 const candI = new Int32Array(CAND);
 const candK = new Int32Array(CAND);
 const candR = new Float32Array(CAND);
-const hann   = new Float32Array(NBUF);
-const mags   = new Float32Array(K_HI + 1);
-const bg     = new Float32Array(16);     // 背景中央値を取るための作業領域
+const pk = { k: 0, prom: 0, sd: 0, r: 0 };   // rhythmOf の結果
 const bins     = new Int32Array(256);   // 候補の閾値を求めるヒストグラム
 const candList = new Int32Array(NC);    // 候補セル
 const bgList   = new Int32Array(NC);    // それ以外(背景の明るさを作るのに使う)
@@ -699,15 +1033,23 @@ const bgList   = new Int32Array(NC);    // それ以外(背景の明るさを作
    ときに呼吸そのものが消えてしまう。 */
 const candMask = new Uint8Array(NC);
 const blobId = new Int32Array(NC);
+/* 周期の安定度の追跡(trackFreq / mechOf が使う) */
+const fst = { n: new Float32Array(NC), m: new Float32Array(NC), v: new Float32Array(NC), t: new Float32Array(NC) };
+let specRun = 0;                         // 周波数解析を行った回数(fst の時刻)
+const resHist = new Int32Array(256);     // フレーム間残差のヒストグラム
 const stack  = new Int32Array(NC);
-for (let t = 0; t < NBUF; t++) hann[t] = 0.5 - 0.5 * Math.cos(2 * Math.PI * t / (NBUF - 1));
 
 let head = 0, filled = 0, tick = 0, havePrev = false;
 let gmEma = 0, moving = false;
 let shiftEma = 0;                        // 全体並進の大きさ(セル/フレーム)
+let noiseSd = 0;                         // 映像のノイズの標準偏差(輝度)
+let lumaEma = 128;                       // 画面の平均輝度
 let accX = 0, accY = 0;                  // 累積変位。手ぶれ補償の基準位置
 let running = false, rafId = 0, lastTick = 0;
 let facing = "environment", track = null, torchOn = false;
+try { if (localStorage.getItem("bioscanner.facing") === "user") facing = "user"; } catch {}
+let frontCam = false;                    // 実際に開いたのが前面カメラか(鏡像表示する)
+let startSeq = 0;                        // カメラ起動の世代。連打で古い起動を捨てる
 let showHeat = true;
 let heatDirty = true;                    // 熱マップを作り直す必要があるか
 let overlayDirty = true;                 // 重畳を描き直す必要があるか
@@ -724,6 +1066,7 @@ let camHeight = 1.4;                     // m
 let tiltOn = false, tiltPhi = 0, tiltRoll = 0, tiltPortrait = true;
 let szOk = false, szW = 0, szH = 0, szD = 0, szAW = 0, szAH = 0, szCell = 0;
 let mMotion = 0, mRhythm = 0, mWarm = 0, topBpm = 0, topBand = "";
+let mechNote = 0;                        // 機械的な周期として弱めた律動の強さ(表示用)
 let blobs = [];
 
 /* トレース: 3Hz × 180 = 直近60秒 */
@@ -751,8 +1094,6 @@ hcan.width = AW; hcan.height = AH;
 const hctx = hcan.getContext("2d");
 const himg = hctx.createImageData(AW, AH);
 
-const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
-
 /* ══ カメラ ══════════════════════════════════════ */
 async function start() {
   if (!window.isSecureContext) {
@@ -761,15 +1102,17 @@ async function start() {
   if (!navigator.mediaDevices?.getUserMedia) {
     return fail("カメラを利用できません", "このブラウザはカメラ取得に対応していません。Safari または Chrome の最新版でお試しください。");
   }
+  const my = ++startSeq;
+  /* 切り替えのときは、先に今のカメラを閉じる。多くの Android 端末は
+     2台のカメラを同時に開けず、開いたまま次を要求すると失敗する。 */
+  stop(false);
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false
-    });
-    stop(false);
+    const stream = await openCamera();
+    if (my !== startSeq) { stream.getTracks().forEach((t) => t.stop()); return; }   /* 連打で追い越された */
     video.srcObject = stream;
     await video.play().catch(() => {});
     track = stream.getVideoTracks()[0] || null;
+    applyFacing();
     setupTorch();
     requestWakeLock();
     veil.hidden = true;
@@ -778,6 +1121,7 @@ async function start() {
     lastTick = 0;
     rafId = requestAnimationFrame(loop);
   } catch (e) {
+    if (my !== startSeq) return;
     const n = e && e.name;
     if (n === "NotAllowedError" || n === "SecurityError")
       fail("カメラの許可が必要です", "ブラウザのアドレスバーのカメラ設定から、このページにカメラの使用を許可してください。許可後にもう一度起動します。");
@@ -790,6 +1134,42 @@ async function start() {
   }
 }
 
+/* 指定した向きのカメラを開く。まず向きを必須条件として要求し、その向きの
+   カメラが無い端末(パソコンなど)では希望条件に緩めて開けるカメラを使う。 */
+async function openCamera() {
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+  try {
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: facing }, ...size }, audio: false });
+  } catch (e) {
+    const n = e && e.name;
+    if (n !== "OverconstrainedError" && n !== "NotFoundError" && n !== "ConstraintNotSatisfiedError") throw e;
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, ...size }, audio: false });
+  }
+}
+
+/* 実際に開いたカメラの向きで、鏡像表示と傾きの式を決める。
+   前面カメラは鏡のように左右反転して見せないと、手の動きと映像が逆になる。
+   反転は解析の段階で行う(格子そのものを反転させる)ので、重畳の枠や文字は
+   そのまま描けばよい。CSS で重畳ごと反転すると文字まで裏返ってしまう。 */
+function applyFacing() {
+  let f = "";
+  try { f = (track && track.getSettings && track.getSettings().facingMode) || ""; } catch {}
+  frontCam = f ? f === "user" : facing === "user";
+  scope.classList.toggle("mirror", frontCam);
+  if (f === "user" || f === "environment") setFacingUI(f);
+  heatDirty = true; overlayDirty = true;
+}
+
+function setFacingUI(f) {
+  facing = f;
+  try { localStorage.setItem("bioscanner.facing", f); } catch {}
+  for (const el of $("segCam").querySelectorAll("button"))
+    el.setAttribute("aria-pressed", String(el.dataset.v === f));
+  const t = f === "user" ? "前面カメラ使用中(背面へ切替)" : "背面カメラ使用中(前面へ切替)";
+  $("btnFlip").title = t;
+  $("btnFlip").setAttribute("aria-label", t);
+}
+
 function fail(title, text) {
   veil.hidden = false;
   veilTitle.textContent = title;
@@ -800,6 +1180,7 @@ function fail(title, text) {
 }
 
 function stop(showVeil = true) {
+  flushAuto();
   running = false;
   if (rafId) cancelAnimationFrame(rafId), rafId = 0;
   const s = video.srcObject;
@@ -814,7 +1195,7 @@ function stop(showVeil = true) {
     veil.hidden = false;
     veilTitle.textContent = "かざした範囲の生体反応を探す";
     veilText.className = "";
-    veilText.innerHTML = "背面カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。";
+    veilText.innerHTML = "カメラの映像から、動き・その動きの律動性・色調を解析します。<strong>約3秒静止</strong>で暫定判定、<strong>約9秒</strong>で呼吸・脈拍の律動解析が有効になります。";
     setState("off", "待機");
     blobs = [];
     octx.clearRect(0, 0, overlay.width, overlay.height);
@@ -830,8 +1211,10 @@ function reset() {
   curY.fill(0); gradX.fill(0); gradY.fill(0);
   head = 0; filled = 0; tick = 0; gmEma = 0; moving = false;
   havePrev = false; shiftEma = 0; accX = 0; accY = 0;
+  noiseSd = 0; lumaEma = 128;
+  fst.n.fill(0); fst.t.fill(-1e9); specRun = 0;
   bgLevel.fill(0); candMask.fill(0); nBasis = 0;
-  verdictEma = 0; blobs = []; topBpm = 0; topBand = ""; peak = 0;
+  verdictEma = 0; blobs = []; topBpm = 0; topBand = ""; peak = 0; mechNote = 0;
   mMotion = mRhythm = mWarm = 0;
   traceBuf.fill(-1); traceHead = 0;
 }
@@ -881,19 +1264,26 @@ function loop(ts) {
   overlayDirty = true;
   render();
   updateDeck();
+  autoStep(ts);
 }
 
 /* 1フレーム: 輝度・動き・色の暖かさ */
 function analyze() {
-  actx.drawImage(video, 0, 0, AW, AH);
+  if (frontCam) {
+    actx.setTransform(-1, 0, 0, 1, AW, 0);
+    actx.drawImage(video, 0, 0, AW, AH);
+    actx.setTransform(1, 0, 0, 1, 0, 0);
+  } else actx.drawImage(video, 0, 0, AW, AH);
   let data;
   try { data = actx.getImageData(0, 0, AW, AH).data; } catch { return; }
 
+  let ySum = 0;
   for (let i = 0; i < NC; i++) {
     const p = i << 2;
     const r = data[p], g = data[p + 1], b = data[p + 2];
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
     curY[i] = y;
+    ySum += y;
 
     /* 暖色らしさ: 色相が橙〜肌色帯にあり、彩度があり、白飛び/黒潰れでない */
     const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
@@ -910,6 +1300,7 @@ function analyze() {
     }
     warm[i] += (w - warm[i]) * 0.08;
   }
+  lumaEma += (ySum / NC - lumaEma) * 0.1;
 
   /* ── 手ぶれ補償 ──────────────────────────────────
      手持ちでは常に微細な並進が乗る。これをそのまま動きとして数えると、
@@ -963,17 +1354,27 @@ function analyze() {
   if (accY > 3) accY = 3; else if (accY < -3) accY = -3;
 
   let nMove = 0;
+  const thrMove = moveThr(noiseSd);
+  resHist.fill(0);
   for (let y = 0, i = 0; y < AH; y++) {
     for (let x = 0; x < AW; x++, i++) {
       /* ずれた位置から双線形補間で取り直す。勾配による一次近似だと誤差が
          変位の二乗で増え、0.3セル/フレーム程度のぶれで検出できなくなる。 */
       const res = havePrev ? Math.abs(sampleAt(curY, x + dx, y + dy) - prevY[i]) : 0;
-      if (res > 2.5) nMove++;
+      if (res > thrMove) nMove++;
+      resHist[res >= 25.5 ? 255 : (res / RES_STEP) | 0]++;
       motion[i] += (res - motion[i]) * 0.18;
       /* 時系列は走査開始時点の位置に揃えて積む。揃えないとぶれ由来の
          輝度変動が律動解析に広帯域ノイズとして乗り、呼吸が埋もれる。 */
       ring[i * NBUF + head] = sampleAt(curY, x + accX, y + accY);
     }
+  }
+
+  /* ノイズはカメラがほぼ静止しているフレームでだけ測る。並進が大きいと
+     補間の誤差が残差に乗ってノイズを大きく見積もるため。 */
+  if (havePrev && Math.hypot(dx, dy) < 0.3) {
+    const est = noiseOfRes(resHist, NC);
+    noiseSd += (est - noiseSd) * (noiseSd ? 0.05 : 1);
   }
 
   prevY.set(curY);
@@ -989,10 +1390,11 @@ function analyze() {
      移動と誤判定してしまうため。 */
   shiftEma += (Math.hypot(dx, dy) - shiftEma) * 0.35;
   gmEma += (nMove / NC - gmEma) * 0.3;
-  if (!moving && (shiftEma > 0.55 || gmEma > 0.55)) moving = true;
-  else if (moving && shiftEma < 0.28 && gmEma < 0.32) moving = false;
+  if (!moving && (shiftEma > 0.55 || gmEma > MOVE_ON)) moving = true;
+  else if (moving && shiftEma < 0.28 && gmEma < MOVE_OFF) moving = false;
 
-  if (moving) { filled = 0; accX = 0; accY = 0; }
+  /* 映っている場面が変わるので、周期の観察もやり直す */
+  if (moving) { filled = 0; accX = 0; accY = 0; fst.n.fill(0); }
   else if (shiftEma > 0.22) filled = Math.max(0, filled - 4);   /* 軽いぶれは少し巻き戻すだけ */
 }
 
@@ -1012,14 +1414,15 @@ function spanLength(f0, f1, tanHalf, d) {
   return d * 2 * tanHalf * (f1 - f0);
 }
 
-/* 端末の傾きから、背面カメラの光軸が水平から何ラジアン下を向いているか。
+/* 端末の傾きから、カメラの光軸が水平から何ラジアン下を向いているか。
    端末座標の -z 軸(背面カメラの向き)の世界座標での鉛直成分が
-   -cos(beta)cos(gamma) になることから導かれる。縦持ち・横持ちに依らない。 */
-function cameraDepression(betaDeg, gammaDeg) {
+   -cos(beta)cos(gamma) になることから導かれる。縦持ち・横持ちに依らない。
+   前面カメラは +z 軸を向くので符号が逆になる。 */
+function cameraDepression(betaDeg, gammaDeg, front = false) {
   const b = betaDeg * Math.PI / 180, g = gammaDeg * Math.PI / 180;
   let s = Math.cos(b) * Math.cos(g);
   if (s > 1) s = 1; else if (s < -1) s = -1;
-  return Math.asin(s);
+  return front ? -Math.asin(s) : Math.asin(s);
 }
 
 /* 平らな地面に立つ対象までの水平距離。
@@ -1040,15 +1443,6 @@ function sampleAt(arr, fx, fy) {
   const o = y0 * AW + x0;
   const a = arr[o], b = arr[o + 1], c = arr[o + AW], d = arr[o + AW + 1];
   return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
-}
-
-/* Goertzel法: n点の信号から k番ビンの振幅 */
-function goertzel(s, n, k) {
-  const c = 2 * Math.cos(2 * Math.PI * k / n);
-  let s1 = 0, s2 = 0;
-  for (let i = 0; i < n; i++) { const v = s[i] + c * s1 - s2; s2 = s1; s1 = v; }
-  const m = s1 * s1 + s2 * s2 - c * s1 * s2;
-  return m > 0 ? Math.sqrt(m) : 0;
 }
 
 /* 外乱の時系列を直交正規化した基底に整える。
@@ -1086,8 +1480,9 @@ function prepBasis(bg, nBg) {
 /* 候補セルの時系列を周波数解析し、呼吸帯/脈拍帯のピークの際立ちを律動スコアに */
 function spectral() {
   for (let i = 0; i < NC; i++) rhythm[i] *= 0.55;
-  topBpm = 0; topBand = "";
+  topBpm = 0; topBand = ""; mechNote = 0;
   if (filled < NBUF || moving) return;
+  specRun++;
 
   /* 動きの強いセルを候補に選ぶ(静止して呼吸するだけの対象も微小な動きで
      上位に来る)。全体を並べ替えると 1728 要素のソートと配列確保が毎回
@@ -1119,10 +1514,8 @@ function spectral() {
   for (let c = 0; c < nCand; c++) {
     const i = candList[c];
     const base = i * NBUF;
-    let mean = 0;
-    for (let t = 0; t < NBUF; t++) { const v = ring[base + (head + t) % NBUF]; sig[t] = v; mean += v; }
-    mean /= NBUF;
-    for (let t = 0; t < NBUF; t++) sig[t] = (sig[t] - mean) * hann[t];
+    for (let t = 0; t < NBUF; t++) sig[t] = ring[base + (head + t) % NBUF];
+    detrendWindow(sig);
 
     /* 外乱で説明できる成分を除去。基底は直交正規化済みなので内積を引くだけ */
     for (let k = 0; k < nBasis; k++) {
@@ -1132,43 +1525,15 @@ function spectral() {
       for (let t = 0; t < NBUF; t++) sig[t] -= dot * B[t];
     }
 
-    /* 振幅は除去後に測る。Hann窓はRMSを√(3/8)倍にするので戻しておく。 */
-    let e = 0;
-    for (let t = 0; t < NBUF; t++) e += sig[t] * sig[t];
-    const sd = Math.sqrt(e / NBUF) / 0.6124;
+    rhythmOf(sig, pk);
 
-    let bB = 0, kB = K_LO, bP = 0, kP = K_PULSE_LO;
-    for (let k = K_LO; k <= K_HI; k++) {
-      const m = goertzel(sig, NBUF, k);
-      mags[k] = m;
-      if (k <= K_BREATH_HI) { if (m > bB) { bB = m; kB = k; } }
-      else if (k >= K_PULSE_LO) { if (m > bP) { bP = m; kP = k; } }
-    }
-    const isB = bB >= bP;
-    const peakMag = isB ? bB : bP;
-    const kTop = isB ? kB : kP;
-
-    /* 際立ちは「全帯域の平均」ではなく「ピーク周辺の背景」と比べる。
-       全帯域平均と比べると、風に揺れる草木のような低周波ほど強い 1/f 的な
-       信号は、高周波まで含めた平均より必ず大きくなるため、周期性がなくても
-       高得点になってしまう。そこで ±6 ビンの窓から Hann 窓の主ローブ(±2)を
-       除いた背景の中央値を取り、山が地の高さからどれだけ抜きん出ているかを見る。 */
-    let nb = 0;
-    const kA = Math.max(K_LO, kTop - 6), kZ = Math.min(K_HI, kTop + 6);
-    for (let k = kA; k <= kZ; k++) if (k < kTop - 2 || k > kTop + 2) bg[nb++] = mags[k];
-    for (let a = 1; a < nb; a++) {          /* 小さい配列なので挿入ソートで中央値 */
-      const v = bg[a]; let b = a - 1;
-      while (b >= 0 && bg[b] > v) { bg[b + 1] = bg[b]; b--; }
-      bg[b + 1] = v;
-    }
-    const bgMed = nb ? bg[nb >> 1] : 0;
-    const prom = peakMag / (bgMed > 1e-9 ? bgMed : 1e-9);
-
-    /* センサーノイズだけで偶然ピークが立つのを抑える振幅の門。
-       あくまで下限の門であって重みではないので、早く 1.0 に飽和させる。 */
-    const ampGate = clamp01((sd - 0.6) / 1.2);
-    const r = clamp01((prom - PROM_LO) / (PROM_HI - PROM_LO)) * ampGate;
-    candI[c] = i; candK[c] = kTop; candR[c] = r;
+    /* 周期が一定すぎるものは機械的な周期として弱める */
+    let r = pk.r;
+    if (r >= R_TRACK) trackFreq(fst, i, pk.f, specRun);
+    const mech = mechOf(fst, i, specRun);
+    if (r * mech > mechNote) mechNote = r * mech;
+    r *= 1 - MECH_DAMP * mech;
+    candI[c] = i; candK[c] = pk.k; candR[c] = r;
   }
 
   /* ── 画面全体に散った周期を落とす ──────────────────────
@@ -1211,8 +1576,9 @@ function spectral() {
 
 /* 3成分を合成 → 空間平滑化 → 連結成分(ブロブ)抽出 */
 function fuse() {
+  const mFloor = motionFloor(noiseSd);
   for (let i = 0; i < NC; i++) {
-    const mN = Math.pow(clamp01((motion[i] - 0.4) / 7), 0.75);
+    const mN = motionNorm(motion[i], mFloor);
     score[i] = 0.40 * mN + 0.40 * rhythm[i] + 0.20 * warm[i];
   }
 
@@ -1285,7 +1651,7 @@ function fuse() {
       for (let x = b.x0; x <= b.x1; x++) {
         const i = y * AW + x;
         if (blobId[i] !== b.id) continue;   /* 外接矩形に混じる別ブロブを除く */
-        sm += Math.pow(clamp01((motion[i] - 0.4) / 7), 0.75);
+        sm += motionNorm(motion[i], mFloor);
         sr += rhythm[i]; sw += warm[i]; n++;
       }
     }
@@ -1384,6 +1750,74 @@ function sizeCanvases() {
   drawSpark();
 }
 
+/* 熱マップの中身は解析のたび(15Hz)にしか変わらない。描画のたびに
+   作り直す必要はないので、変わった時だけ作る。 */
+function updateHeat() {
+  if (!heatDirty) return;
+  const px = himg.data;
+  for (let i = 0; i < NC; i++) {
+    const v = (smooth[i] - 0.14) * 335.5;        /* = /0.76*255 */
+    const q = v < 0 ? 0 : v > 255 ? 255 : v | 0;
+    const o = i << 2, m = q << 2;
+    px[o] = RAMP[m]; px[o + 1] = RAMP[m + 1]; px[o + 2] = RAMP[m + 2]; px[o + 3] = RAMP[m + 3];
+  }
+  hctx.putImageData(himg, 0, 0);
+  heatDirty = false;
+}
+
+/* 熱マップと検出枠を、映像が映っている矩形 R に重ねて描く。
+   画面の重畳と記録の静止画で共用する。s は線や文字の倍率。 */
+function drawMarks(ctx, R, s, heat) {
+  if (heat) {
+    updateHeat();
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.globalAlpha = 0.82;
+    ctx.drawImage(hcan, R.x, R.y, R.w, R.h);
+    ctx.restore();
+  }
+
+  /* 枠(四隅のかぎ括弧)+ ラベル */
+  const cw = R.w / AW, chh = R.h / AH;
+  ctx.lineWidth = Math.max(1.5, 2 * s);
+  for (let bi = 0; bi < blobs.length; bi++) {
+    const b = blobs[bi];
+    const x = R.x + b.x0 * cw, y = R.y + b.y0 * chh;
+    const w = (b.x1 - b.x0 + 1) * cw, h = (b.y1 - b.y0 + 1) * chh;
+    const v = clamp01((b.v - 0.18) / 0.62);
+    const col = v > 0.66 ? "#FF5B37" : v > 0.38 ? "#FFB341" : "#45D3C0";
+    ctx.strokeStyle = col;
+    ctx.globalAlpha = bi === 0 ? 1 : 0.5;
+    const L = Math.min(w, h) * 0.28 + 4 * s;
+    ctx.beginPath();
+    ctx.moveTo(x, y + L);           ctx.lineTo(x, y);          ctx.lineTo(x + L, y);
+    ctx.moveTo(x + w - L, y);       ctx.lineTo(x + w, y);      ctx.lineTo(x + w, y + L);
+    ctx.moveTo(x + w, y + h - L);   ctx.lineTo(x + w, y + h);  ctx.lineTo(x + w - L, y + h);
+    ctx.moveTo(x + L, y + h);       ctx.lineTo(x, y + h);      ctx.lineTo(x, y + h - L);
+    ctx.stroke();
+
+    if (bi === 0) {
+      const t = Math.round(v * 100) + "%" + (szOk ? "  " + fmtLen(szW) : "");
+      ctx.font = "600 " + Math.round(13 * s) + "px 'IBM Plex Mono', ui-monospace, monospace";
+      const tw = ctx.measureText(t).width;
+      const bh = 19 * s, pad = 6 * s;
+      const by = y - bh - 3 * s < R.y ? y + h + 3 * s : y - bh - 3 * s;
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = "#080D0E";
+      ctx.fillRect(x, by, tw + pad * 2, bh);
+      ctx.fillStyle = col;
+      ctx.fillRect(x, by, 2 * s, bh);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#EAF0ED";
+      ctx.textBaseline = "middle";
+      ctx.fillText(t, x + pad, by + bh / 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
 function render() {
   const W = overlay.width, H = overlay.height;
   octx.clearRect(0, 0, W, H);
@@ -1392,66 +1826,7 @@ function render() {
   const acquiring = filled < READY_MIN || moving;
   sweep.hidden = !acquiring;
 
-  if (showHeat && !acquiring) {
-    /* 熱マップの中身は解析のたび(15Hz)にしか変わらない。描画のたびに
-       作り直す必要はないので、変わった時だけ作る。 */
-    if (heatDirty) {
-      const px = himg.data;
-      for (let i = 0; i < NC; i++) {
-        const v = (smooth[i] - 0.14) * 335.5;        /* = /0.76*255 */
-        const q = v < 0 ? 0 : v > 255 ? 255 : v | 0;
-        const o = i << 2, m = q << 2;
-        px[o] = RAMP[m]; px[o + 1] = RAMP[m + 1]; px[o + 2] = RAMP[m + 2]; px[o + 3] = RAMP[m + 3];
-      }
-      hctx.putImageData(himg, 0, 0);
-      heatDirty = false;
-    }
-    octx.save();
-    octx.globalCompositeOperation = "lighter";
-    octx.imageSmoothingEnabled = true;
-    octx.imageSmoothingQuality = "high";
-    octx.globalAlpha = 0.82;
-    octx.drawImage(hcan, R.x, R.y, R.w, R.h);
-    octx.restore();
-  }
-
-  /* 枠(四隅のかぎ括弧)+ ラベル */
-  const cw = R.w / AW, chh = R.h / AH;
-  octx.lineWidth = Math.max(1.5, 2 * dpr);
-  for (let bi = 0; bi < blobs.length; bi++) {
-    const b = blobs[bi];
-    const x = R.x + b.x0 * cw, y = R.y + b.y0 * chh;
-    const w = (b.x1 - b.x0 + 1) * cw, h = (b.y1 - b.y0 + 1) * chh;
-    const v = clamp01((b.v - 0.18) / 0.62);
-    const col = v > 0.66 ? "#FF5B37" : v > 0.38 ? "#FFB341" : "#45D3C0";
-    octx.strokeStyle = col;
-    octx.globalAlpha = bi === 0 ? 1 : 0.5;
-    const L = Math.min(w, h) * 0.28 + 4 * dpr;
-    octx.beginPath();
-    octx.moveTo(x, y + L);           octx.lineTo(x, y);          octx.lineTo(x + L, y);
-    octx.moveTo(x + w - L, y);       octx.lineTo(x + w, y);      octx.lineTo(x + w, y + L);
-    octx.moveTo(x + w, y + h - L);   octx.lineTo(x + w, y + h);  octx.lineTo(x + w - L, y + h);
-    octx.moveTo(x + L, y + h);       octx.lineTo(x, y + h);      octx.lineTo(x, y + h - L);
-    octx.stroke();
-
-    if (bi === 0) {
-      const t = Math.round(v * 100) + "%" + (szOk ? "  " + fmtLen(szW) : "");
-      octx.font = "600 " + Math.round(13 * dpr) + "px 'IBM Plex Mono', monospace";
-      const tw = octx.measureText(t).width;
-      const bh = 19 * dpr, pad = 6 * dpr;
-      const by = y - bh - 3 * dpr < R.y ? y + h + 3 * dpr : y - bh - 3 * dpr;
-      octx.globalAlpha = 0.92;
-      octx.fillStyle = "#080D0E";
-      octx.fillRect(x, by, tw + pad * 2, bh);
-      octx.fillStyle = col;
-      octx.fillRect(x, by, 2 * dpr, bh);
-      octx.globalAlpha = 1;
-      octx.fillStyle = "#EAF0ED";
-      octx.textBaseline = "middle";
-      octx.fillText(t, x + pad, by + bh / 2);
-    }
-    octx.globalAlpha = 1;
-  }
+  drawMarks(octx, R, dpr, showHeat && !acquiring);
 
   /* 中央レティクル */
   const cx = R.x + R.w / 2, cy = R.y + R.h / 2, g = 6 * dpr, a = 13 * dpr;
@@ -1483,9 +1858,12 @@ function updateDeck() {
               : filled < NBUF ? "part" : "full";
 
   const shaky = shiftEma > 0.22;
+  /* 暗所: ノイズに合わせてしきい値を上げているので、弱い動きは拾えなくなる */
+  const dark = noiseSd > 1.5 || lumaEma < 30;
   if (phase === "move")      setState("hold", "移動中 — 静止してください");
   else if (phase === "acq")  setState("hold", "基準取得 " + Math.round(filled / READY_MIN * 100) + "%");
   else if (shaky)            setState("hold", "手ぶれ補正中 — 感度が下がります");
+  else if (dark)             setState("hold", $("btnTorch").hidden || torchOn ? "暗所 — 感度低下" : "暗所 — ☀ を推奨");
   else if (phase === "part") setState("live", "走査中 — 律動解析まで " + ((NBUF - filled) / FS).toFixed(1) + "秒");
   else                       setState("live", "走査中 — 全帯域");
 
@@ -1512,6 +1890,7 @@ function updateDeck() {
   const parts = [];
   if (phase === "part") parts.push("動き・温感のみ");
   else if (topBpm > 0 && mRhythm > 0.25) parts.push(topBand + " " + topBpm + "/分");
+  if (phase === "full" && mechNote > 0.4) parts.push("一定周期を除外");
   parts.push("検出 " + blobs.length + " 件");
   if (phase === "full") parts.push("最大 " + peak + "%");
   vSub.textContent = parts.join(" · ");
@@ -1642,14 +2021,344 @@ function drawSpark() {
   }
 }
 
+/* ══ 記録 ══════════════════════════════════════════
+   検出した瞬間の画面(熱マップ・枠つき)と数値を、端末のブラウザ内
+   (IndexedDB)にだけ保存する。外へは送らない。
+   自動記録は反応が「生体の可能性」を超えたところで1回の出来事として扱い、
+   その間で最も強かった瞬間を1枚だけ残す。反応が下がるか60秒経つまで次は
+   記録しないので、同じ対象を写し続けても記録が溢れない。 */
+const LOG_MAX = 200;
+const AUTO_ON = 0.46, AUTO_OFF = 0.36, AUTO_REARM = 0.30;
+const AUTO_MAX_MS = 8000, AUTO_GAP_MS = 60000;
+
+let autoLog = true;
+try { autoLog = localStorage.getItem("bioscanner.autoLog") !== "0"; } catch {}
+let ep = null;                           // 進行中の出来事 { t0, best, lastSnap, meta }
+let epArmed = true, lastCommit = 0;
+
+/* 自動記録の候補と手動記録で描き先を分ける。分けないと、出来事の途中で
+   手動記録すると候補の絵が上書きされてしまう。 */
+const autoCan = document.createElement("canvas");
+const snapCan = document.createElement("canvas");
+
+/* ── IndexedDB ── */
+let dbP = null;
+function db() {
+  if (!dbP) dbP = new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error("no idb"));
+    const q = indexedDB.open("bioscanner", 1);
+    q.onupgradeneeded = () => q.result.createObjectStore("records", { keyPath: "id", autoIncrement: true });
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  });
+  dbP.catch(() => { dbP = null; });
+  return dbP;
+}
+function tx(mode, fn) {
+  return db().then((d) => new Promise((res, rej) => {
+    const t = d.transaction("records", mode);
+    const st = t.objectStore("records");
+    let out;
+    Promise.resolve(fn(st)).then((v) => { out = v; });
+    t.oncomplete = () => res(out);
+    t.onerror = t.onabort = () => rej(t.error);
+  }));
+}
+const req = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const dbAll = () => tx("readonly", (st) => req(st.getAll()));
+const dbDel = (id) => tx("readwrite", (st) => { st.delete(id); });
+const dbClear = () => tx("readwrite", (st) => { st.clear(); });
+const dbCount = () => tx("readonly", (st) => req(st.count()));
+/* 追加して、上限を超えた古いものを消す(id は増える一方なので小さい順が古い) */
+const dbAdd = (rec) => tx("readwrite", async (st) => {
+  st.add(rec);
+  const keys = await req(st.getAllKeys());
+  for (let k = 0; k < keys.length - LOG_MAX; k++) st.delete(keys[k]);
+});
+
+/* ── 静止画 ── */
+const pad2 = (n) => String(n).padStart(2, "0");
+function fmtTime(t, sep = "-") {
+  const d = new Date(t);
+  return d.getFullYear() + sep + pad2(d.getMonth() + 1) + sep + pad2(d.getDate()) + " " +
+    pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+}
+
+/* いまの状態を記録用の数値にまとめる */
+function snapMeta(mode) {
+  const live = !moving && filled >= READY_MIN;
+  const v = live ? verdictEma : 0;
+  let w = WORDS[0];
+  for (const row of WORDS) if (v >= row[0]) w = row;
+  return {
+    t: Date.now(), mode,
+    v: Math.round(v * 100), lv: w[2],
+    word: live ? (filled < NBUF ? w[1] + "(暫定)" : w[1]) : "判定前",
+    period: topBpm > 0 && mRhythm > 0.25 ? topBand + " " + topBpm + "/分" : "",
+    mech: mechNote > 0.4,
+    m: Math.round(mMotion * 100), r: Math.round(mRhythm * 100), w: Math.round(mWarm * 100),
+    n: blobs.length,
+    size: blobs.length && szOk ? "幅 " + fmtRange(szW, szCell) + " · 高さ " + fmtRange(szH, szCell) + " · 距離 " + fmtLen(szD)
+        : blobs.length ? "角寸法 " + szAW.toFixed(1) + "° × " + szAH.toFixed(1) + "°" : "",
+    dark: noiseSd > 1.5 || lumaEma < 30
+  };
+}
+
+/* 映像の1コマに熱マップ・枠と、下に数値の帯を描いて cv に置く */
+function drawSnapshot(meta, cv) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return false;
+  const sc = Math.min(1, 1280 / Math.max(vw, vh));
+  const w = Math.round(vw * sc), h = Math.round(vh * sc);
+  const s = Math.max(1, w / 640);
+  const strip = Math.round(58 * s);
+  cv.width = w; cv.height = h + strip;
+  const c = cv.getContext("2d");
+  if (frontCam) { c.setTransform(-1, 0, 0, 1, w, 0); c.drawImage(video, 0, 0, w, h); c.setTransform(1, 0, 0, 1, 0, 0); }
+  else c.drawImage(video, 0, 0, w, h);
+  if (!moving && filled >= READY_MIN) drawMarks(c, { x: 0, y: 0, w, h }, s, showHeat);
+
+  c.fillStyle = "#080D0E";
+  c.fillRect(0, h, w, strip);
+  c.fillStyle = "#FFB341";
+  c.fillRect(0, h, w, Math.max(1, Math.round(s)));
+  c.textBaseline = "middle";
+  const mono = "'IBM Plex Mono', ui-monospace, Menlo, monospace";
+  const l1 = "生体スキャナー  " + fmtTime(meta.t) + "  反応 " + meta.v + "% " + meta.word;
+  const l2 = [meta.period, meta.mech ? "一定周期を除外" : "", "動き " + meta.m + " 律動 " + meta.r + " 温感 " + meta.w]
+    .filter(Boolean).join(" · ");
+  const l3 = meta.size || (meta.n ? "" : "検出なし");
+  const maxW = w - 20 * s;
+  c.fillStyle = "#EAF0ED";
+  c.font = "600 " + Math.round(13 * s) + "px " + mono;
+  c.fillText(l1, 10 * s, h + 15 * s, maxW);
+  c.fillStyle = "#9AA9A5";
+  c.font = Math.round(11 * s) + "px " + mono;
+  c.fillText(l2, 10 * s, h + 32 * s, maxW);
+  if (l3) c.fillText(l3, 10 * s, h + 47 * s, maxW);
+  return true;
+}
+
+const toBlob = (cv, q) => new Promise((res) => cv.toBlob(res, "image/jpeg", q));
+
+/* cv の内容を保存する。toBlob は呼んだ時点の絵を写し取るので、
+   直後に cv を描き直しても保存される絵は変わらない。縮小版も同期的に
+   作っておく(await の後だと描き直された絵を縮小してしまう)。 */
+async function commitSnapshot(meta, cv) {
+  const tw = 320, th = Math.round(cv.height * tw / cv.width);
+  const tc = document.createElement("canvas");
+  tc.width = tw; tc.height = th;
+  tc.getContext("2d").drawImage(cv, 0, 0, tw, th);
+  const [img, thumb] = await Promise.all([toBlob(cv, 0.86), toBlob(tc, 0.7)]);
+  if (!img || !thumb) return;
+  try {
+    await dbAdd({ ...meta, img, thumb });
+    toast(meta.mode === "auto" ? "反応 " + meta.v + "% を自動で記録しました" : "記録しました");
+    refreshCount();
+  } catch {
+    toast("記録を保存できませんでした(ブラウザの保存領域が使えません)");
+  }
+}
+
+/* 主ループから毎回呼ぶ。自動記録の出来事を進める */
+function autoStep(now) {
+  if (!autoLog || !running) { ep = null; return; }
+  const live = !moving && filled >= READY_MIN;
+  const v = verdictEma;
+  if (ep) {
+    if (live && v > ep.best + 0.02 && blobs.length && now - ep.lastSnap > 500) {
+      /* より強い瞬間に差し替える */
+      const meta = snapMeta("auto");
+      if (drawSnapshot(meta, autoCan)) { ep.best = v; ep.lastSnap = now; ep.meta = meta; }
+    }
+    if (!live || v < AUTO_OFF || now - ep.t0 > AUTO_MAX_MS) {
+      commitSnapshot(ep.meta, autoCan);
+      ep = null; epArmed = false; lastCommit = now;
+    }
+    return;
+  }
+  if (!epArmed && (v < AUTO_REARM || now - lastCommit > AUTO_GAP_MS)) epArmed = true;
+  if (epArmed && live && v >= AUTO_ON && blobs.length) {
+    const meta = snapMeta("auto");
+    if (drawSnapshot(meta, autoCan)) ep = { t0: now, best: v, lastSnap: now, meta };
+  }
+}
+
+/* 停止やカメラ切替の前に、進行中の出来事を確定させる */
+function flushAuto() {
+  if (ep) { commitSnapshot(ep.meta, autoCan); ep = null; epArmed = false; lastCommit = performance.now(); }
+}
+
+let toastTimer = 0;
+function toast(text) {
+  const el = $("toast");
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 1800);
+}
+
+function refreshCount() {
+  dbCount().then((n) => { $("logCount").textContent = n ? String(n) : ""; }).catch(() => {});
+}
+
+/* ── 一覧 ── */
+const logDlg = $("logDlg");
+let urls = [];
+let shown = null;                        // 詳細表示中の記録
+
+function freeUrls() { for (const u of urls) URL.revokeObjectURL(u); urls = []; }
+function objUrl(b) { const u = URL.createObjectURL(b); urls.push(u); return u; }
+
+async function openLog() {
+  if (!logDlg.open) logDlg.showModal();
+  showList();
+}
+
+async function showList() {
+  shown = null;
+  freeUrls();
+  $("logDetail").hidden = true;
+  $("logNote").hidden = false;
+  $("btnBack").hidden = $("btnDel").hidden = $("btnSave").hidden = true;
+  $("btnClear").hidden = false;
+  const grid = $("logGrid");
+  grid.hidden = false;
+  grid.textContent = "";
+  let recs = [];
+  try { recs = await dbAll(); }
+  catch {
+    $("logEmpty").hidden = false;
+    $("logEmpty").textContent = "このブラウザでは記録を保存できません(プライベートモードなど)。";
+    return;
+  }
+  recs.sort((a, b) => b.t - a.t);
+  $("logEmpty").hidden = recs.length > 0;
+  $("btnClear").hidden = !recs.length;
+  for (const r of recs) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rec";
+    b.dataset.lv = r.lv;
+    const img = document.createElement("img");
+    img.alt = "";
+    img.loading = "lazy";
+    img.src = objUrl(r.thumb);
+    const cap = document.createElement("span");
+    cap.className = "r-cap";
+    const v = document.createElement("span");
+    v.className = "r-v";
+    v.textContent = r.v + "%" + (r.period ? "  " + r.period : "");
+    const t = document.createElement("span");
+    t.className = "r-t";
+    t.textContent = fmtTime(r.t, "/").slice(5) + (r.mode === "auto" ? " 自動" : " 手動");
+    cap.append(v, t);
+    b.append(img, cap);
+    b.addEventListener("click", () => showDetail(r));
+    grid.append(b);
+  }
+}
+
+function showDetail(r) {
+  shown = r;
+  $("logGrid").hidden = true;
+  $("logEmpty").hidden = true;
+  $("logDetail").hidden = false;
+  $("logNote").hidden = true;
+  $("dImg").src = objUrl(r.img);
+  const rows = [
+    ["日時", fmtTime(r.t)],
+    ["反応", r.v + "% " + r.word],
+    ["周期", (r.period || "—") + (r.mech ? "(一定周期を除外)" : "")],
+    ["内訳", "動き " + r.m + " · 律動 " + r.r + " · 温感 " + r.w],
+    ["検出", r.n + " 件"],
+    ["大きさ", r.size || "—"],
+    ["記録", (r.mode === "auto" ? "自動" : "手動") + (r.dark ? " · 暗所" : "")]
+  ];
+  const dl = $("dMeta");
+  dl.textContent = "";
+  for (const [k, v] of rows) {
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v;
+    dl.append(dt, dd);
+  }
+  $("btnBack").hidden = $("btnDel").hidden = $("btnSave").hidden = false;
+  $("btnClear").hidden = true;
+  logDlg.querySelector(".log-body").scrollTop = 0;
+}
+
+/* 共有(写真アプリ等へ)できればそうし、できなければファイルとして保存する */
+async function saveRecord(r) {
+  const d = new Date(r.t);
+  const name = "bioscanner-" + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + "-" +
+    pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds()) + ".jpg";
+  const file = new File([r.img], name, { type: "image/jpeg" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "生体スキャナーの記録" });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;     /* 利用者が共有を取り消した */
+  }
+  const u = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = u; a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 4000);
+}
+
+function setAuto(on) {
+  autoLog = on;
+  if (!on) ep = null;
+  try { localStorage.setItem("bioscanner.autoLog", on ? "1" : "0"); } catch {}
+  for (const el of $("segAuto").querySelectorAll("button"))
+    el.setAttribute("aria-pressed", String((el.dataset.v === "1") === on));
+}
+
 /* ══ 操作 ════════════════════════════════════════ */
 $("btnStart").addEventListener("click", start);
 $("btnStop").addEventListener("click", () => stop(true));
 
-$("btnFlip").addEventListener("click", () => {
-  facing = facing === "environment" ? "user" : "environment";
-  if (running) start();
+$("btnSnap").addEventListener("click", () => {
+  if (!running || !video.videoWidth) { toast("カメラを起動してから記録してください"); return; }
+  const meta = snapMeta("manual");
+  if (drawSnapshot(meta, snapCan)) commitSnapshot(meta, snapCan);
 });
+$("btnLog").addEventListener("click", openLog);
+$("btnLogClose").addEventListener("click", () => logDlg.close());
+logDlg.addEventListener("close", () => { freeUrls(); shown = null; });
+$("btnBack").addEventListener("click", showList);
+$("btnSave").addEventListener("click", () => { if (shown) saveRecord(shown); });
+$("btnDel").addEventListener("click", async () => {
+  if (!shown || !confirm("この記録を削除しますか?")) return;
+  try { await dbDel(shown.id); } catch {}
+  refreshCount();
+  showList();
+});
+$("btnClear").addEventListener("click", async () => {
+  if (!confirm("すべての記録を削除しますか?元に戻せません。")) return;
+  try { await dbClear(); } catch {}
+  refreshCount();
+  showList();
+});
+$("segAuto").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-v]");
+  if (b) setAuto(b.dataset.v === "1");
+});
+setAuto(autoLog);
+refreshCount();
+
+$("btnFlip").addEventListener("click", () => {
+  setFacingUI(facing === "environment" ? "user" : "environment");
+  if (running) start();
+  else toast(facing === "user" ? "前面カメラで起動します" : "背面カメラで起動します");
+});
+$("segCam").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-v]");
+  if (b) setFacingUI(b.dataset.v);
+});
+setFacingUI(facing);
 
 $("btnHeat").addEventListener("click", (e) => {
   showHeat = !showHeat;
@@ -1710,7 +2419,7 @@ bindRange("rFov", "nFov", (v) => Math.round(v) + "°", (v) => { fovH = v; });
 
 function onOrient(e) {
   if (e.beta == null || e.gamma == null) return;
-  tiltPhi = cameraDepression(e.beta, e.gamma);
+  tiltPhi = cameraDepression(e.beta, e.gamma, frontCam);
   tiltRoll = Math.abs(e.gamma);
   const a = (screen.orientation && screen.orientation.angle) || 0;
   tiltPortrait = a === 0 || a === 180;
